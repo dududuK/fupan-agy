@@ -1,81 +1,104 @@
 ---
-import { getLogsSorted, toEquitySeries } from '../lib/trades';
+import {
+  ACCOUNT_CONFIG,
+  formatCurrency,
+  getLogsSorted,
+  getRegisteredPatterns,
+  toEquitySeries,
+} from '../lib/trades';
 
 interface Props {
   compact?: boolean;
 }
 const { compact = false } = Astro.props;
 
-const logs = await getLogsSorted();
-const series = toEquitySeries(logs);
+const [logs, registeredPatterns] = await Promise.all([
+  getLogsSorted(),
+  getRegisteredPatterns(),
+]);
+const series = toEquitySeries(logs, registeredPatterns);
 
 const W = 760;
-const H = compact ? 180 : 280;
-const PAD = { top: 22, right: 24, bottom: 34, left: 58 };
+const H = compact ? 190 : 290;
+const PAD = { top: 24, right: 24, bottom: 34, left: 74 };
 const iw = W - PAD.left - PAD.right;
 const ih = H - PAD.top - PAD.bottom;
 
-const vals = series.map((s) => s.net_value);
-const rawMin = vals.length ? Math.min(...vals, 1.0) : 0.95;
-const rawMax = vals.length ? Math.max(...vals, 1.05) : 1.05;
-const vSpread = Math.max(rawMax - rawMin, 0.04);
-const minV = rawMin - vSpread * 0.12;
-const maxV = rawMax + vSpread * 0.14;
+const equities = series.map((s) => s.totalEquity);
+const rawMinEq = equities.length ? Math.min(...equities, ACCOUNT_CONFIG.initialCapital) : ACCOUNT_CONFIG.initialCapital * 0.98;
+const rawMaxEq = equities.length ? Math.max(...equities, ACCOUNT_CONFIG.initialCapital) : ACCOUNT_CONFIG.initialCapital * 1.02;
+const eqSpread = Math.max(rawMaxEq - rawMinEq, ACCOUNT_CONFIG.initialCapital * 0.02);
+const minEq = rawMinEq - eqSpread * 0.16;
+const maxEq = rawMaxEq + eqSpread * 0.18;
+
+const minNav = minEq / ACCOUNT_CONFIG.initialCapital;
+const maxNav = maxEq / ACCOUNT_CONFIG.initialCapital;
 
 const n = series.length;
 const xAt = (idx: number) => (n <= 1 ? PAD.left + iw / 2 : PAD.left + (idx / (n - 1)) * iw);
-const yNav = (v: number) => PAD.top + ih - ((v - minV) / Math.max(maxV - minV, 0.001)) * ih;
+const yEq = (v: number) => PAD.top + ih - ((v - minEq) / Math.max(maxEq - minEq, 1)) * ih;
 const yDisc = (d: number) => PAD.top + ih - (Math.max(0, Math.min(10, d)) / 10) * ih;
 
-const navPoints = series.map((s, i) => ({
+const points = series.map((s, i) => ({
   ...s,
   cx: Number(xAt(i).toFixed(1)),
-  cyNav: Number(yNav(s.net_value).toFixed(1)),
-  cyDisc: Number(yDisc(s.discipline).toFixed(1)),
+  cyEq: Number(yEq(s.totalEquity).toFixed(1)),
+  cyDisc: s.discipline != null ? Number(yDisc(s.discipline).toFixed(1)) : null,
 }));
 
-const navLine = navPoints.map((p) => `${p.cx},${p.cyNav}`).join(' ');
-const navArea =
-  navPoints.length > 0
-    ? `${navPoints[0].cx},${PAD.top + ih} ${navLine} ${navPoints[navPoints.length - 1].cx},${PAD.top + ih}`
+const eqLine = points.map((p) => `${p.cx},${p.cyEq}`).join(' ');
+const eqArea =
+  points.length > 0
+    ? `${points[0].cx},${PAD.top + ih} ${eqLine} ${points[points.length - 1].cx},${PAD.top + ih}`
     : '';
 
-const discLine = navPoints.map((p) => `${p.cx},${p.cyDisc}`).join(' ');
+const discPoints = points.filter((p) => p.cyDisc != null);
+const discLine = discPoints.map((p) => `${p.cx},${p.cyDisc}`).join(' ');
 const discArea =
-  navPoints.length > 0
-    ? `${navPoints[0].cx},${PAD.top + ih} ${discLine} ${navPoints[navPoints.length - 1].cx},${PAD.top + ih}`
+  discPoints.length > 0
+    ? `${discPoints[0].cx},${PAD.top + ih} ${discLine} ${discPoints[discPoints.length - 1].cx},${PAD.top + ih}`
     : '';
 
-const navGridVals = [minV, minV + (maxV - minV) * 0.33, minV + (maxV - minV) * 0.66, maxV];
+const gridRatios = [0, 0.333, 0.666, 1];
+const eqGridVals = gridRatios.map((r) => minEq + (maxEq - minEq) * r);
+const navGridVals = gridRatios.map((r) => minNav + (maxNav - minNav) * r);
 const discGridVals = [0, 4, 7, 10];
-const baselineY = yNav(1.0);
-const showBaseline = 1.0 >= minV && 1.0 <= maxV;
-const latest = navPoints[navPoints.length - 1] ?? null;
-const xAxisLabels = navPoints
+
+const baselineY = yEq(ACCOUNT_CONFIG.initialCapital);
+const latest = points[points.length - 1] ?? null;
+
+const xAxisLabels = points
   .map((p, idx) => ({
     ...p,
     show:
-      navPoints.length <= 6 ||
+      points.length <= 6 ||
       idx === 0 ||
-      idx === navPoints.length - 1 ||
-      idx === Math.floor(navPoints.length / 2),
-    anchor: idx === 0 ? 'start' : idx === navPoints.length - 1 ? 'end' : 'middle',
+      idx === points.length - 1 ||
+      idx === Math.floor(points.length / 2),
+    anchor: idx === 0 ? 'start' : idx === points.length - 1 ? 'end' : 'middle',
   }))
   .filter((p) => p.show);
+
+const formatAxisMoney = (v: number) => {
+  if (Math.abs(v) >= 10_000) {
+    return `¥${(v / 10_000).toFixed(2)}万`;
+  }
+  return `¥${Math.round(v).toLocaleString('zh-CN')}`;
+};
 ---
 
 <section
   class="equity-panel flex flex-col justify-between h-full border border-[var(--line)] bg-[var(--surface)]"
-  data-series={JSON.stringify(navPoints)}
+  data-series={JSON.stringify(points)}
 >
   <div class="px-5 py-4 border-b border-[var(--line)] flex flex-wrap items-center justify-between gap-4">
-    <div class="flex items-baseline gap-3 min-w-0">
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 min-w-0">
       <h2 class="text-sm font-semibold tracking-tight text-[var(--ink)] whitespace-nowrap">
-        资金净值曲线
+        账户资金曲线
       </h2>
       {latest && (
         <span class="equity-readout text-xs font-mono tabular-nums text-[var(--ink-secondary)] truncate">
-          {latest.date} · 净值 {latest.net_value.toFixed(3)} · 纪律 {latest.discipline}/10
+          {latest.date} · 总资产 {formatCurrency(latest.totalEquity)} · 净值 {latest.net_value.toFixed(3)} · 累计 {latest.cumulativeReturnPct > 0 ? '+' : ''}{latest.cumulativeReturnPct.toFixed(2)}%
         </span>
       )}
     </div>
@@ -86,19 +109,28 @@ const xAxisLabels = navPoints
           type="button"
           role="tab"
           aria-selected="true"
-          data-mode="nav"
-          class="equity-mode-btn px-3 py-1 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
+          data-mode="equity"
+          class="equity-mode-btn px-2.5 py-1 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
         >
-          净值走势
+          总资产
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          data-mode="nav"
+          class="equity-mode-btn px-2.5 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
+        >
+          净值
         </button>
         <button
           type="button"
           role="tab"
           aria-selected="false"
           data-mode="disc"
-          class="equity-mode-btn px-3 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
+          class="equity-mode-btn px-2.5 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
         >
-          纪律评分
+          纪律分
         </button>
       </div>
     )}
@@ -107,8 +139,8 @@ const xAxisLabels = navPoints
   <div class="p-5 flex-1 flex flex-col justify-center">
     {series.length === 0 ? (
       <div class="py-12 text-center">
-        <p class="text-sm text-[var(--ink-secondary)]">暂无复盘净值数据</p>
-        <p class="mt-1 text-xs text-[var(--ink-muted)]">在 src/content/logs 中添加复盘记录后将自动绘制曲线。</p>
+        <p class="text-sm text-[var(--ink-secondary)]">暂无复盘交割数据</p>
+        <p class="mt-1 text-xs text-[var(--ink-muted)]">在 src/content/logs 中添加复盘记录后将基于初始资金自动核算曲线。</p>
       </div>
     ) : (
       <div class="relative w-full">
@@ -116,10 +148,10 @@ const xAxisLabels = navPoints
           viewBox={`0 0 ${W} ${H}`}
           class="w-full h-auto block select-none overflow-visible"
           role="img"
-          aria-label="资金净值与纪律评分趋势图"
+          aria-label="基于初始资金与每日交易核算的资金曲线"
         >
           <defs>
-            <linearGradient id="navAreaFill" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id="eqAreaFill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.18" />
               <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
             </linearGradient>
@@ -129,58 +161,75 @@ const xAxisLabels = navPoints
             </linearGradient>
           </defs>
 
-          <!-- NAV Layer -->
-          <g class="layer-nav">
-            {navGridVals.map((v) => (
+          <!-- Equity (Money) & NAV Shared Curve Layer -->
+          <g class="layer-money">
+            {eqGridVals.map((v, i) => (
               <g>
                 <line
                   x1={PAD.left}
                   x2={W - PAD.right}
-                  y1={yNav(v)}
-                  y2={yNav(v)}
+                  y1={yEq(v)}
+                  y2={yEq(v)}
                   stroke="var(--chart-grid)"
                   stroke-width="1"
                 />
                 <text
                   x={PAD.left - 10}
-                  y={yNav(v) + 3.5}
+                  y={yEq(v) + 3.5}
                   text-anchor="end"
                   fill="var(--chart-axis)"
-                  class="font-mono text-[10px] tabular-nums"
+                  class="axis-equity font-mono text-[10px] tabular-nums"
                 >
-                  {v.toFixed(3)}
+                  {formatAxisMoney(v)}
+                </text>
+                <text
+                  x={PAD.left - 10}
+                  y={yEq(v) + 3.5}
+                  text-anchor="end"
+                  fill="var(--chart-axis)"
+                  class="axis-nav hidden font-mono text-[10px] tabular-nums"
+                >
+                  {navGridVals[i].toFixed(3)}
                 </text>
               </g>
             ))}
 
-            {showBaseline && (
-              <g>
-                <line
-                  x1={PAD.left}
-                  x2={W - PAD.right}
-                  y1={baselineY}
-                  y2={baselineY}
-                  stroke="var(--line-strong)"
-                  stroke-width="1"
-                  stroke-dasharray="4 4"
-                />
-                <text
-                  x={W - PAD.right}
-                  y={baselineY - 5}
-                  text-anchor="end"
-                  fill="var(--ink-muted)"
-                  class="font-mono text-[9px]"
-                >
-                  基准 1.000
-                </text>
-              </g>
-            )}
+            <!-- Initial Capital Baseline -->
+            <g>
+              <line
+                x1={PAD.left}
+                x2={W - PAD.right}
+                y1={baselineY}
+                y2={baselineY}
+                stroke="var(--line-strong)"
+                stroke-width="1"
+                stroke-dasharray="4 4"
+              />
+              <text
+                x={W - PAD.right}
+                y={baselineY - 6}
+                text-anchor="end"
+                fill="var(--ink-muted)"
+                class="axis-equity font-mono text-[9px]"
+              >
+                初始资金 {formatAxisMoney(ACCOUNT_CONFIG.initialCapital)}
+              </text>
+              <text
+                x={W - PAD.right}
+                y={baselineY - 6}
+                text-anchor="end"
+                fill="var(--ink-muted)"
+                class="axis-nav hidden font-mono text-[9px]"
+              >
+                基准净值 1.000
+              </text>
+            </g>
 
-            {navPoints.length > 1 && (
+            {points.length > 1 && (
               <>
-                <polygon points={navArea} fill="url(#navAreaFill)" />
+                <polygon points={eqArea} fill="url(#eqAreaFill)" />
                 <polyline
-                  points={navLine}
+                  points={eqLine}
                   fill="none"
                   stroke="var(--accent)"
                   stroke-width="2"
@@ -189,8 +238,12 @@ const xAxisLabels = navPoints
               </>
             )}
 
-            {navPoints.map((p, idx) => (
-              <g class="chart-node cursor-pointer" data-idx={idx} data-href={`/logs/${p.slug}`}>
+            {points.map((p, idx) => (
+              <g
+                class:list={['chart-node', p.slug ? 'cursor-pointer' : 'cursor-default']}
+                data-idx={idx}
+                data-href={p.slug ? `/logs/${p.slug}` : ''}
+              >
                 <line
                   x1={p.cx}
                   x2={p.cx}
@@ -203,22 +256,21 @@ const xAxisLabels = navPoints
                 />
                 <rect
                   x={p.cx - 4}
-                  y={p.cyNav - 4}
+                  y={p.cyEq - 4}
                   width="8"
                   height="8"
-                  fill="var(--surface)"
+                  fill={p.isInitial ? 'var(--line-strong)' : 'var(--surface)'}
                   stroke="var(--accent)"
                   stroke-width="2"
-                  class="node-marker transition-transform duration-150"
                 />
                 <rect
-                  x={p.cx - 24}
+                  x={p.cx - 28}
                   y={PAD.top}
-                  width="48"
+                  width="56"
                   height={ih}
                   fill="transparent"
                 />
-                <title>{`${p.date} · ${p.title} · 净值 ${p.net_value.toFixed(3)} · 纪律 ${p.discipline}/10`}</title>
+                <title>{`${p.date} · 总资产 ${formatCurrency(p.totalEquity)} · 净值 ${p.net_value.toFixed(3)}`}</title>
               </g>
             ))}
           </g>
@@ -247,7 +299,7 @@ const xAxisLabels = navPoints
               </g>
             ))}
 
-            {navPoints.length > 1 && (
+            {discPoints.length > 1 && (
               <>
                 <polygon points={discArea} fill="url(#discAreaFill)" />
                 <polyline
@@ -260,40 +312,46 @@ const xAxisLabels = navPoints
               </>
             )}
 
-            {navPoints.map((p, idx) => (
-              <g class="chart-node cursor-pointer" data-idx={idx} data-href={`/logs/${p.slug}`}>
-                <line
-                  x1={p.cx}
-                  x2={p.cx}
-                  y1={PAD.top}
-                  y2={PAD.top + ih}
-                  stroke="var(--gain)"
-                  stroke-width="1"
-                  stroke-dasharray="2 3"
-                  class="node-guide opacity-0 transition-opacity duration-150"
-                />
-                <rect
-                  x={p.cx - 4}
-                  y={p.cyDisc - 4}
-                  width="8"
-                  height="8"
-                  fill="var(--surface)"
-                  stroke="var(--gain)"
-                  stroke-width="2"
-                />
-                <rect
-                  x={p.cx - 24}
-                  y={PAD.top}
-                  width="48"
-                  height={ih}
-                  fill="transparent"
-                />
-                <title>{`${p.date} · ${p.title} · 纪律 ${p.discipline}/10`}</title>
-              </g>
-            ))}
+            {points.map((p, idx) =>
+              p.cyDisc != null ? (
+                <g
+                  class="chart-node cursor-pointer"
+                  data-idx={idx}
+                  data-href={p.slug ? `/logs/${p.slug}` : ''}
+                >
+                  <line
+                    x1={p.cx}
+                    x2={p.cx}
+                    y1={PAD.top}
+                    y2={PAD.top + ih}
+                    stroke="var(--gain)"
+                    stroke-width="1"
+                    stroke-dasharray="2 3"
+                    class="node-guide opacity-0 transition-opacity duration-150"
+                  />
+                  <rect
+                    x={p.cx - 4}
+                    y={p.cyDisc - 4}
+                    width="8"
+                    height="8"
+                    fill="var(--surface)"
+                    stroke="var(--gain)"
+                    stroke-width="2"
+                  />
+                  <rect
+                    x={p.cx - 28}
+                    y={PAD.top}
+                    width="56"
+                    height={ih}
+                    fill="transparent"
+                  />
+                  <title>{`${p.date} · 纪律 ${p.discipline}/10`}</title>
+                </g>
+              ) : null
+            )}
           </g>
 
-          <!-- X-axis date ticks -->
+          <!-- X-axis ticks -->
           {xAxisLabels.map((p) => (
             <text
               x={p.cx}
@@ -312,20 +370,44 @@ const xAxisLabels = navPoints
 
   {latest && (
     <div class="px-5 py-3 border-t border-[var(--line)] bg-[var(--surface-subtle)]/50 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--ink-muted)]">
-      <span class="equity-active-title truncate">{latest.title}</span>
-      <span class="font-mono whitespace-nowrap shrink-0">点击节点直达当日复盘</span>
+      <span class="equity-active-detail font-mono tabular-nums truncate">
+        现金 {formatCurrency(latest.cash)} · 持仓 {formatCurrency(latest.marketValue)} · {latest.title}
+      </span>
+      <span class="font-mono whitespace-nowrap shrink-0">
+        初始 ¥{ACCOUNT_CONFIG.initialCapital.toLocaleString('zh-CN')} · 万2.5佣金+千0.5印花税
+      </span>
     </div>
   )}
 </section>
 
 <script>
   interface PointData {
-    slug: string;
+    slug: string | null;
     date: string;
+    totalEquity: number;
+    cash: number;
+    marketValue: number;
     net_value: number;
-    discipline: number;
+    dailyPnl: number;
+    dailyReturnPct: number;
+    cumulativeReturnPct: number;
+    discipline: number | null;
     title: string;
     tradeCount: number;
+    isInitial?: boolean;
+  }
+
+  function fmtMoney(v: number, sign = false): string {
+    const abs = Math.abs(v).toLocaleString('zh-CN', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+    if (sign) {
+      if (v > 0) return `+¥${abs}`;
+      if (v < 0) return `-¥${abs}`;
+      return `¥${abs}`;
+    }
+    return v < 0 ? `-¥${abs}` : `¥${abs}`;
   }
 
   document.querySelectorAll<HTMLElement>('.equity-panel').forEach((panel) => {
@@ -335,28 +417,40 @@ const xAxisLabels = navPoints
     if (!points.length) return;
 
     const readout = panel.querySelector<HTMLElement>('.equity-readout');
-    const titleEl = panel.querySelector<HTMLElement>('.equity-active-title');
-    const navLayer = panel.querySelector<SVGGElement>('.layer-nav');
+    const detailEl = panel.querySelector<HTMLElement>('.equity-active-detail');
+    const moneyLayer = panel.querySelector<SVGGElement>('.layer-money');
     const discLayer = panel.querySelector<SVGGElement>('.layer-disc');
+    const axisEquity = panel.querySelectorAll<SVGElement>('.axis-equity');
+    const axisNav = panel.querySelectorAll<SVGElement>('.axis-nav');
     const modeBtns = panel.querySelectorAll<HTMLButtonElement>('.equity-mode-btn');
 
     const updateReadout = (idx: number) => {
       const p = points[idx];
       if (!p) return;
       if (readout) {
-        readout.textContent = `${p.date} · 净值 ${p.net_value.toFixed(3)} · 纪律 ${p.discipline}/10 · ${p.tradeCount} 笔交割`;
+        if (p.isInitial) {
+          readout.textContent = `初始本金 · 总资产 ${fmtMoney(p.totalEquity)} · 净值 1.000`;
+        } else {
+          const dailyStr = `${fmtMoney(p.dailyPnl, true)} (${p.dailyReturnPct > 0 ? '+' : ''}${p.dailyReturnPct.toFixed(2)}%)`;
+          readout.textContent = `${p.date} · 总资产 ${fmtMoney(p.totalEquity)} · 当日 ${dailyStr} · 净值 ${p.net_value.toFixed(3)}`;
+        }
       }
-      if (titleEl) {
-        titleEl.textContent = p.title;
+      if (detailEl) {
+        detailEl.textContent = `现金 ${fmtMoney(p.cash)} · 持仓 ${fmtMoney(p.marketValue)} · ${p.title}`;
       }
     };
 
     modeBtns.forEach((btn) => {
       btn.addEventListener('click', () => {
         const mode = btn.dataset.mode;
+        const isDisc = mode === 'disc';
         const isNav = mode === 'nav';
-        navLayer?.classList.toggle('hidden', !isNav);
-        discLayer?.classList.toggle('hidden', isNav);
+
+        moneyLayer?.classList.toggle('hidden', isDisc);
+        discLayer?.classList.toggle('hidden', !isDisc);
+        axisEquity.forEach((el) => el.classList.toggle('hidden', isNav));
+        axisNav.forEach((el) => el.classList.toggle('hidden', !isNav));
+
         modeBtns.forEach((b) => {
           const active = b.dataset.mode === mode;
           b.setAttribute('aria-selected', String(active));

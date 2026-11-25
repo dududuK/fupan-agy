@@ -1,7 +1,11 @@
 ---
 import { getCollection, render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
-import { getLogsSorted, aggregatePatternStats } from '../../lib/trades';
+import {
+  aggregatePatternStats,
+  formatCurrency,
+  getComputedLedger,
+} from '../../lib/trades';
 
 export async function getStaticPaths() {
   const playbook = await getCollection('playbook');
@@ -13,7 +17,7 @@ export async function getStaticPaths() {
 
 const { entry } = Astro.props;
 const { Content } = await render(entry);
-const logs = await getLogsSorted();
+const { logs, ledger } = await getComputedLedger();
 const patternKey = entry.data.pattern ?? entry.data.title;
 const cases = logs.filter((l) => l.data.trades.some((t) => t.pattern === patternKey));
 const stat = aggregatePatternStats(logs).find((s) => s.pattern === patternKey) ?? null;
@@ -108,6 +112,7 @@ const stat = aggregatePatternStats(logs).find((s) => s.pattern === patternKey) ?
       <ul class="border border-[var(--line)] bg-[var(--surface)] divide-y divide-[var(--line)]">
         {cases.map((l) => {
           const matchedTrades = l.data.trades.filter((t) => t.pattern === patternKey);
+          const snap = ledger.bySlug.get(l.id);
           return (
             <li>
               <a
@@ -116,7 +121,8 @@ const stat = aggregatePatternStats(logs).find((s) => s.pattern === patternKey) ?
               >
                 <div class="min-w-0">
                   <div class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
-                    {l.data.date.toISOString().slice(0, 10)} · 净值 {l.data.net_value.toFixed(3)}
+                    {l.data.date.toISOString().slice(0, 10)}
+                    {snap ? ` · 总资产 ${formatCurrency(snap.totalEquity)} · 净值 ${snap.netValue.toFixed(3)}` : ''}
                   </div>
                   <div class="mt-1 font-semibold text-sm text-[var(--ink)]">{l.data.title}</div>
                   <div class="mt-1 text-xs text-[var(--ink-secondary)]">{l.data.summary}</div>

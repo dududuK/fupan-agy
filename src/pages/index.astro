@@ -2,88 +2,105 @@
 import Base from '../layouts/Base.astro';
 import EquityCurve from '../components/EquityCurve.astro';
 import PatternStats from '../components/PatternStats.astro';
-import { getLogsSorted, aggregatePatternStats } from '../lib/trades';
+import {
+  ACCOUNT_CONFIG,
+  aggregatePatternStats,
+  formatCurrency,
+  getComputedLedger,
+} from '../lib/trades';
 import { getCollection } from 'astro:content';
 
-const logs = await getLogsSorted();
+const { logs, ledger } = await getComputedLedger();
 const patternStats = aggregatePatternStats(logs);
 const playbook = (await getCollection('playbook')).sort((a, b) => a.id.localeCompare(b.id));
 const rules = await getCollection('rules');
 
 const [featured] = logs;
-const dayCount = logs.length;
-const latestNv = featured?.data.net_value ?? null;
-const firstNv = logs.length ? logs[logs.length - 1].data.net_value : null;
-const avgDisciplineNum =
-  dayCount > 0 ? logs.reduce((s, l) => s + l.data.discipline, 0) / dayCount : null;
+const latestSnap = ledger.latest;
+const avgDisciplineNum = ledger.avgDiscipline;
 const avgDiscipline = avgDisciplineNum != null ? avgDisciplineNum.toFixed(1) : '—';
-const totalTrades = logs.reduce((s, l) => s + l.data.trades.length, 0);
-const nvChange =
-  latestNv != null && firstNv ? ((latestNv - firstNv) / firstNv) * 100 : null;
-const latestDate = featured ? featured.data.date.toISOString().slice(0, 10) : '—';
+
+const cashRatio =
+  latestSnap && latestSnap.totalEquity > 0
+    ? (latestSnap.cash / latestSnap.totalEquity) * 100
+    : 100;
+const positionRatio = 100 - cashRatio;
 
 const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
 ---
 
 <Base title="复盘手账">
-  <!-- Row 1: Architectural Masthead & 4-Column Hairline KPI Strip -->
+  <!-- Row 1: 4-Column Real Account KPI Strip -->
   <section class="mb-8">
-    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6">
-      <div>
-        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-[var(--ink)]">
-          实盘复盘台
-        </h1>
-        <p class="mt-2 text-sm text-[var(--ink-secondary)]">
-          真实操作 · 认知经验 · 数据做证人
-        </p>
-      </div>
-      <div class="flex items-center gap-3 text-xs font-mono tabular-nums text-[var(--ink-muted)]">
-        <span>最近更新 {latestDate}</span>
-        <span aria-hidden="true">/</span>
-        <span>累计 {dayCount} 篇记录</span>
-      </div>
-    </div>
-
-    <div class="grid grid-cols-2 lg:grid-cols-4 border-y border-[var(--line)] divide-y sm:divide-y-0 lg:divide-x divide-[var(--line)] bg-[var(--surface)]">
+    <h1 class="sr-only">复盘手账</h1>
+    <div class="grid grid-cols-2 lg:grid-cols-4 border border-[var(--line)] divide-y sm:divide-y-0 lg:divide-x divide-[var(--line)] bg-[var(--surface)]">
       <div class="px-5 py-4 border-r border-[var(--line)] lg:border-r-0">
-        <div class="text-xs text-[var(--ink-muted)]">最新账户净值</div>
+        <div class="text-xs text-[var(--ink-muted)]">账户总资产</div>
         <div class="mt-1.5 flex items-baseline gap-2.5">
           <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
-            {latestNv == null ? '—' : latestNv.toFixed(3)}
+            {latestSnap ? formatCurrency(latestSnap.totalEquity) : formatCurrency(ACCOUNT_CONFIG.initialCapital)}
           </span>
-          {latestNv != null && (
-            <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
-              基准 1.000
-            </span>
-          )}
+        </div>
+        <div class="mt-1 font-mono text-[11px] tabular-nums text-[var(--ink-muted)]">
+          初始 {formatCurrency(ACCOUNT_CONFIG.initialCapital)} · 净值 {latestSnap ? latestSnap.netValue.toFixed(3) : '1.000'}
         </div>
       </div>
 
       <div class="px-5 py-4">
-        <div class="text-xs text-[var(--ink-muted)]">记录区间收益</div>
+        <div class="text-xs text-[var(--ink-muted)]">累计总盈亏</div>
         <div class="mt-1.5 flex items-baseline gap-2">
           <span
             class:list={[
               'font-mono text-2xl sm:text-3xl font-bold tabular-nums',
-              nvChange == null
+              !latestSnap || latestSnap.cumulativePnl === 0
                 ? 'text-[var(--ink)]'
-                : nvChange >= 0
+                : latestSnap.cumulativePnl > 0
                   ? 'text-[var(--gain)]'
                   : 'text-[var(--loss)]',
             ]}
           >
-            {nvChange == null ? '—' : `${nvChange > 0 ? '+' : ''}${nvChange.toFixed(2)}%`}
+            {latestSnap ? formatCurrency(latestSnap.cumulativePnl, true) : '¥0.00'}
           </span>
-          {nvChange != null && (
-            <span class="text-xs text-[var(--ink-muted)]">
-              {nvChange >= 0 ? '正收益' : '回撤中'}
-            </span>
-          )}
+        </div>
+        <div class="mt-1 font-mono text-[11px] tabular-nums text-[var(--ink-muted)]">
+          收益率{' '}
+          <span
+            class={
+              !latestSnap || latestSnap.cumulativeReturnPct === 0
+                ? ''
+                : latestSnap.cumulativeReturnPct > 0
+                  ? 'text-[var(--gain)] font-semibold'
+                  : 'text-[var(--loss)] font-semibold'
+            }
+          >
+            {latestSnap
+              ? `${latestSnap.cumulativeReturnPct > 0 ? '+' : ''}${latestSnap.cumulativeReturnPct.toFixed(2)}%`
+              : '0.00%'}
+          </span>
+          {latestSnap && ` · ${latestSnap.cumulativePnl >= 0 ? '正收益' : '回撤中'}`}
         </div>
       </div>
 
       <div class="px-5 py-4 border-r border-[var(--line)] lg:border-r-0">
-        <div class="text-xs text-[var(--ink-muted)]">平均纪律评分</div>
+        <div class="text-xs text-[var(--ink-muted)]">现金 / 持仓结构</div>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
+            {positionRatio.toFixed(1)}%
+          </span>
+          <span class="text-xs text-[var(--ink-muted)]">仓位</span>
+        </div>
+        <div class="mt-1 font-mono text-[11px] tabular-nums text-[var(--ink-muted)]">
+          现金 {formatCurrency(latestSnap?.cash ?? ACCOUNT_CONFIG.initialCapital)} · 持仓 {formatCurrency(latestSnap?.marketValue ?? 0)}
+        </div>
+      </div>
+
+      <div class="px-5 py-4">
+        <div class="flex items-center justify-between gap-2">
+          <span class="text-xs text-[var(--ink-muted)]">平均纪律评分</span>
+          <a href="/rules/iron-rules" class="text-[11px] font-mono text-[var(--accent)] hover:text-[var(--accent-hover)] whitespace-nowrap">
+            评分标准 →
+          </a>
+        </div>
         <div class="mt-1.5 flex items-baseline gap-2">
           <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
             {avgDiscipline}
@@ -105,18 +122,6 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
           </div>
         )}
       </div>
-
-      <div class="px-5 py-4">
-        <div class="text-xs text-[var(--ink-muted)]">实盘交割样本</div>
-        <div class="mt-1.5 flex items-baseline gap-2">
-          <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
-            {totalTrades}
-          </span>
-          <span class="text-xs text-[var(--ink-muted)]">
-            笔交割 · {patternStats.length} 种战法
-          </span>
-        </div>
-      </div>
     </div>
   </section>
 
@@ -127,12 +132,12 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
     </div>
 
     <div class="lg:col-span-5 flex flex-col">
-      {featured ? (
+      {featured && latestSnap ? (
         <article class="flex flex-col justify-between h-full border border-[var(--line)] bg-[var(--surface)]">
           <div class="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between gap-4">
             <span class="text-xs font-medium text-[var(--accent)]">最新一期复盘</span>
             <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
-              {featured.data.date.toISOString().slice(0, 10)} · 纪律 {featured.data.discipline}/10
+              {featured.data.date.toISOString().slice(0, 10)} · 纪律 {latestSnap.discipline}/10 ({latestSnap.disciplineAudit.grade})
             </span>
           </div>
 
@@ -151,37 +156,37 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
               </p>
             </div>
 
-            {featured.data.trades.length > 0 ? (
+            {latestSnap.executions.length > 0 ? (
               <div class="border-t border-[var(--line)] pt-4">
-                <div class="text-xs text-[var(--ink-muted)] mb-2.5">当日交割明细</div>
+                <div class="text-xs text-[var(--ink-muted)] mb-2.5">当日交割核算</div>
                 <div class="divide-y divide-[var(--line)] border-y border-[var(--line)]">
-                  {featured.data.trades.map((t) => (
+                  {latestSnap.executions.map((ex) => (
                     <div class="py-2 flex items-center justify-between gap-3 text-xs">
                       <div class="flex items-center gap-2 min-w-0">
                         <span
                           class:list={[
                             'font-mono font-semibold shrink-0',
-                            t.action === 'BUY' ? 'text-[var(--accent)]' : 'text-[var(--gain)]',
+                            ex.trade.action === 'BUY' ? 'text-[var(--accent)]' : 'text-[var(--gain)]',
                           ]}
                         >
-                          {t.action === 'BUY' ? '买' : '卖'}
+                          {ex.trade.action === 'BUY' ? '买' : '卖'}
                         </span>
                         <span class="font-mono text-[var(--ink-muted)] tabular-nums shrink-0">
-                          {t.code}
+                          {ex.trade.code}
                         </span>
-                        <span class="font-medium text-[var(--ink)] truncate">{t.name}</span>
-                        <span class="text-[var(--ink-muted)] hidden sm:inline truncate">
-                          · {t.pattern}
+                        <span class="font-medium text-[var(--ink)] truncate">{ex.trade.name}</span>
+                        <span class="font-mono text-[var(--ink-muted)] hidden sm:inline shrink-0">
+                          {Math.round(ex.shares)}股
                         </span>
                       </div>
                       <div class="font-mono tabular-nums shrink-0 text-right">
-                        {t.pnl_pct != null ? (
-                          <span class={t.pnl_pct >= 0 ? 'text-[var(--gain)] font-semibold' : 'text-[var(--loss)] font-semibold'}>
-                            {t.pnl_pct > 0 ? `+${t.pnl_pct}%` : `${t.pnl_pct}%`}
+                        {ex.realizedPnl != null ? (
+                          <span class={ex.realizedPnl >= 0 ? 'text-[var(--gain)] font-semibold' : 'text-[var(--loss)] font-semibold'}>
+                            {formatCurrency(ex.realizedPnl, true)}
                           </span>
                         ) : (
                           <span class="text-[var(--ink-secondary)]">
-                            {t.result === 'HOLD' ? '持仓' : `@${t.price.toFixed(2)}`}
+                            {formatCurrency(ex.grossAmount)}
                           </span>
                         )}
                       </div>
@@ -194,11 +199,40 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
                 当日空仓观望，无交割记录。
               </div>
             )}
+
+            {latestSnap.holdings.length > 0 && (
+              <div class="border-t border-[var(--line)] pt-3">
+                <div class="text-xs text-[var(--ink-muted)] mb-1.5">当前持仓</div>
+                <div class="space-y-1">
+                  {latestSnap.holdings.map((h) => (
+                    <div class="flex items-center justify-between gap-3 text-xs font-mono tabular-nums">
+                      <span class="text-[var(--ink)] truncate">
+                        {h.code} {h.name} · {Math.round(h.shares)}股
+                      </span>
+                      <span class="text-[var(--ink-secondary)] shrink-0">
+                        市值 {formatCurrency(h.marketValue)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div class="px-5 py-3.5 border-t border-[var(--line)] bg-[var(--surface-subtle)]/50 flex items-center justify-between gap-4">
             <span class="font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
-              当日净值 <strong class="text-[var(--ink)]">{featured.data.net_value.toFixed(3)}</strong>
+              当日盈亏{' '}
+              <strong
+                class={
+                  latestSnap.dailyPnl > 0
+                    ? 'text-[var(--gain)]'
+                    : latestSnap.dailyPnl < 0
+                      ? 'text-[var(--loss)]'
+                      : 'text-[var(--ink)]'
+                }
+              >
+                {formatCurrency(latestSnap.dailyPnl, true)}
+              </strong>
             </span>
             <a
               href={`/logs/${featured.id}`}
@@ -226,7 +260,7 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
             独立档案页 →
           </a>
         </div>
-        <p class="mt-0.5 text-xs text-[var(--ink-muted)]">按日期倒序归档，支持检索标的、代码、战法或按仓位状态筛选</p>
+        <p class="mt-0.5 text-xs text-[var(--ink-muted)]">按日期倒序归档，总资产与盈亏均由初始资金按每日交割自动计算</p>
       </div>
 
       <div class="flex flex-wrap items-center gap-3">
@@ -269,15 +303,16 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
     <div class="border-x border-b border-[var(--line)] bg-[var(--surface)]">
       <div class="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-[var(--line)] bg-[var(--surface-subtle)]/60 text-xs text-[var(--ink-muted)]">
         <div class="col-span-2 font-mono">日期</div>
-        <div class="col-span-6">复盘摘要与涉及战法</div>
-        <div class="col-span-1 text-right font-mono">净值</div>
+        <div class="col-span-5">复盘摘要与涉及战法</div>
+        <div class="col-span-2 text-right font-mono">收盘总资产</div>
+        <div class="col-span-2 text-right font-mono">当日盈亏</div>
         <div class="col-span-1 text-right font-mono">纪律</div>
-        <div class="col-span-2 text-right">交割</div>
       </div>
 
       <ul id="archive-list" class="divide-y divide-[var(--line)]">
         {logs.map((l) => {
           const dateStr = l.data.date.toISOString().slice(0, 10);
+          const snap = ledger.bySlug.get(l.id);
           const patterns = [...new Set(l.data.trades.map((t) => t.pattern))];
           const searchHaystack = [
             l.data.title,
@@ -302,11 +337,11 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
                     {dateStr}
                   </span>
                   <span class="md:hidden font-mono text-xs tabular-nums text-[var(--ink)]">
-                    净值 {l.data.net_value.toFixed(3)} · 纪律 {l.data.discipline}/10
+                    {snap ? formatCurrency(snap.totalEquity) : '—'} · 纪律 {snap?.discipline ?? '—'}/10
                   </span>
                 </div>
 
-                <div class="md:col-span-6 min-w-0">
+                <div class="md:col-span-5 min-w-0">
                   <div class="font-semibold text-sm text-[var(--ink)] group-hover:text-[var(--accent)] transition-colors truncate">
                     {l.data.title}
                   </div>
@@ -320,21 +355,30 @@ const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
                   )}
                 </div>
 
-                <div class="hidden md:block md:col-span-1 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
-                  {l.data.net_value.toFixed(3)}
+                <div class="hidden md:block md:col-span-2 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
+                  {snap ? formatCurrency(snap.totalEquity) : '—'}
+                </div>
+
+                <div class="hidden md:block md:col-span-2 text-right font-mono text-xs tabular-nums">
+                  {snap ? (
+                    <span
+                      class={
+                        snap.dailyPnl > 0
+                          ? 'text-[var(--gain)] font-semibold'
+                          : snap.dailyPnl < 0
+                            ? 'text-[var(--loss)] font-semibold'
+                            : 'text-[var(--ink-muted)]'
+                      }
+                    >
+                      {formatCurrency(snap.dailyPnl, true)} ({snap.dailyReturnPct > 0 ? '+' : ''}{snap.dailyReturnPct.toFixed(2)}%)
+                    </span>
+                  ) : (
+                    '—'
+                  )}
                 </div>
 
                 <div class="hidden md:block md:col-span-1 text-right font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
-                  {l.data.discipline}/10
-                </div>
-
-                <div class="hidden md:flex md:col-span-2 items-center justify-end gap-3 text-xs">
-                  <span class="font-mono tabular-nums text-[var(--ink-muted)]">
-                    {l.data.trades.length > 0 ? `${l.data.trades.length} 笔交割` : '空仓'}
-                  </span>
-                  <span class="text-[var(--ink-muted)] group-hover:text-[var(--accent)] transition-colors">
-                    →
-                  </span>
+                  {snap?.discipline ?? '—'}/10
                 </div>
               </a>
             </li>

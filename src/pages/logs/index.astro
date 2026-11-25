@@ -1,8 +1,12 @@
 ---
 import Base from '../../layouts/Base.astro';
-import { getLogsSorted } from '../../lib/trades';
+import {
+  ACCOUNT_CONFIG,
+  formatCurrency,
+  getComputedLedger,
+} from '../../lib/trades';
 
-const logs = await getLogsSorted();
+const { logs, ledger } = await getComputedLedger();
 const totalTrades = logs.reduce((s, l) => s + l.data.trades.length, 0);
 const flatDays = logs.filter((l) => l.data.trades.length === 0).length;
 const allPatterns = [
@@ -19,7 +23,7 @@ const dateRange =
     <div>
       <h1 class="text-3xl font-bold tracking-tight text-[var(--ink)]">复盘档案</h1>
       <p class="mt-2 text-sm text-[var(--ink-secondary)]">
-        每一篇实盘记录都留存当日净值、纪律评分、交割明细与决策还原。
+        从初始资金 {formatCurrency(ACCOUNT_CONFIG.initialCapital)} 起逐日核算，留存每日总资产、当日盈亏、交割明细与决策还原。
       </p>
     </div>
     <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums text-[var(--ink-muted)]">
@@ -87,10 +91,10 @@ const dateRange =
   <section class="border border-[var(--line)] bg-[var(--surface)]">
     <div class="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-[var(--line)] bg-[var(--surface-subtle)]/60 text-xs text-[var(--ink-muted)]">
       <div class="col-span-2 font-mono">日期</div>
-      <div class="col-span-6">复盘标题、摘要与涉及战法</div>
-      <div class="col-span-1 text-right font-mono">净值</div>
+      <div class="col-span-5">复盘标题、摘要与涉及战法</div>
+      <div class="col-span-2 text-right font-mono">收盘总资产</div>
+      <div class="col-span-2 text-right font-mono">当日盈亏</div>
       <div class="col-span-1 text-right font-mono">纪律</div>
-      <div class="col-span-2 text-right">交割明细</div>
     </div>
 
     {logs.length === 0 ? (
@@ -101,6 +105,7 @@ const dateRange =
       <ul id="logs-list" class="divide-y divide-[var(--line)]">
         {logs.map((l) => {
           const dateStr = l.data.date.toISOString().slice(0, 10);
+          const snap = ledger.bySlug.get(l.id);
           const patterns = [...new Set(l.data.trades.map((t) => t.pattern))];
           const haystack = [
             l.data.title,
@@ -127,11 +132,11 @@ const dateRange =
                     {dateStr}
                   </span>
                   <span class="md:hidden font-mono text-xs tabular-nums text-[var(--ink)]">
-                    净值 {l.data.net_value.toFixed(3)} · 纪律 {l.data.discipline}/10
+                    {snap ? formatCurrency(snap.totalEquity) : '—'} · 纪律 {snap?.discipline ?? '—'}/10
                   </span>
                 </div>
 
-                <div class="md:col-span-6 min-w-0">
+                <div class="md:col-span-5 min-w-0">
                   <div class="font-semibold text-sm text-[var(--ink)] group-hover:text-[var(--accent)] transition-colors">
                     {l.data.title}
                   </div>
@@ -153,21 +158,35 @@ const dateRange =
                   )}
                 </div>
 
-                <div class="hidden md:block md:col-span-1 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
-                  {l.data.net_value.toFixed(3)}
+                <div class="hidden md:block md:col-span-2 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
+                  <div>{snap ? formatCurrency(snap.totalEquity) : '—'}</div>
+                  {snap && (
+                    <div class="text-[11px] text-[var(--ink-muted)] font-normal">
+                      净值 {snap.netValue.toFixed(3)}
+                    </div>
+                  )}
+                </div>
+
+                <div class="hidden md:block md:col-span-2 text-right font-mono text-xs tabular-nums">
+                  {snap ? (
+                    <span
+                      class={
+                        snap.dailyPnl > 0
+                          ? 'text-[var(--gain)] font-semibold'
+                          : snap.dailyPnl < 0
+                            ? 'text-[var(--loss)] font-semibold'
+                            : 'text-[var(--ink-muted)]'
+                      }
+                    >
+                      {formatCurrency(snap.dailyPnl, true)} ({snap.dailyReturnPct > 0 ? '+' : ''}{snap.dailyReturnPct.toFixed(2)}%)
+                    </span>
+                  ) : (
+                    '—'
+                  )}
                 </div>
 
                 <div class="hidden md:block md:col-span-1 text-right font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
-                  {l.data.discipline}/10
-                </div>
-
-                <div class="hidden md:flex md:col-span-2 items-center justify-end gap-3 text-xs">
-                  <span class="font-mono tabular-nums text-[var(--ink-muted)]">
-                    {l.data.trades.length > 0 ? `${l.data.trades.length} 笔交割` : '空仓'}
-                  </span>
-                  <span class="text-[var(--ink-muted)] group-hover:text-[var(--accent)] transition-colors">
-                    →
-                  </span>
+                  {snap?.discipline ?? '—'}/10
                 </div>
               </a>
             </li>

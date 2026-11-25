@@ -189,3 +189,48 @@
   color: var(--accent-hover);
   text-decoration-color: currentColor;
 }
+
+.prose-ledger table {
+  width: 100%;
+  margin: 1.5rem 0;
+  border-collapse: collapse;
+  border: 1px solid var(--line);
+  font-size: 0.84rem;
+  line-height: 1.65;
+  display: block;
+  overflow-x: auto;
+}
+
+.prose-ledger thead {
+  background-color: var(--surface-subtle);
+}
+
+.prose-ledger th,
+.prose-ledger td {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose-ledger th {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+.prose-ledger td {
+  color: var(--ink-secondary);
+}
+
+.prose-ledger tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.prose-ledger td strong {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
