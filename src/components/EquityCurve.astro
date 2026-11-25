@@ -1,0 +1,389 @@
+---
+import { getLogsSorted, toEquitySeries } from '../lib/trades';
+
+interface Props {
+  compact?: boolean;
+}
+const { compact = false } = Astro.props;
+
+const logs = await getLogsSorted();
+const series = toEquitySeries(logs);
+
+const W = 760;
+const H = compact ? 180 : 280;
+const PAD = { top: 22, right: 24, bottom: 34, left: 58 };
+const iw = W - PAD.left - PAD.right;
+const ih = H - PAD.top - PAD.bottom;
+
+const vals = series.map((s) => s.net_value);
+const rawMin = vals.length ? Math.min(...vals, 1.0) : 0.95;
+const rawMax = vals.length ? Math.max(...vals, 1.05) : 1.05;
+const vSpread = Math.max(rawMax - rawMin, 0.04);
+const minV = rawMin - vSpread * 0.12;
+const maxV = rawMax + vSpread * 0.14;
+
+const n = series.length;
+const xAt = (idx: number) => (n <= 1 ? PAD.left + iw / 2 : PAD.left + (idx / (n - 1)) * iw);
+const yNav = (v: number) => PAD.top + ih - ((v - minV) / Math.max(maxV - minV, 0.001)) * ih;
+const yDisc = (d: number) => PAD.top + ih - (Math.max(0, Math.min(10, d)) / 10) * ih;
+
+const navPoints = series.map((s, i) => ({
+  ...s,
+  cx: Number(xAt(i).toFixed(1)),
+  cyNav: Number(yNav(s.net_value).toFixed(1)),
+  cyDisc: Number(yDisc(s.discipline).toFixed(1)),
+}));
+
+const navLine = navPoints.map((p) => `${p.cx},${p.cyNav}`).join(' ');
+const navArea =
+  navPoints.length > 0
+    ? `${navPoints[0].cx},${PAD.top + ih} ${navLine} ${navPoints[navPoints.length - 1].cx},${PAD.top + ih}`
+    : '';
+
+const discLine = navPoints.map((p) => `${p.cx},${p.cyDisc}`).join(' ');
+const discArea =
+  navPoints.length > 0
+    ? `${navPoints[0].cx},${PAD.top + ih} ${discLine} ${navPoints[navPoints.length - 1].cx},${PAD.top + ih}`
+    : '';
+
+const navGridVals = [minV, minV + (maxV - minV) * 0.33, minV + (maxV - minV) * 0.66, maxV];
+const discGridVals = [0, 4, 7, 10];
+const baselineY = yNav(1.0);
+const showBaseline = 1.0 >= minV && 1.0 <= maxV;
+const latest = navPoints[navPoints.length - 1] ?? null;
+const xAxisLabels = navPoints
+  .map((p, idx) => ({
+    ...p,
+    show:
+      navPoints.length <= 6 ||
+      idx === 0 ||
+      idx === navPoints.length - 1 ||
+      idx === Math.floor(navPoints.length / 2),
+    anchor: idx === 0 ? 'start' : idx === navPoints.length - 1 ? 'end' : 'middle',
+  }))
+  .filter((p) => p.show);
+---
+
+<section
+  class="equity-panel flex flex-col justify-between h-full border border-[var(--line)] bg-[var(--surface)]"
+  data-series={JSON.stringify(navPoints)}
+>
+  <div class="px-5 py-4 border-b border-[var(--line)] flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-baseline gap-3 min-w-0">
+      <h2 class="text-sm font-semibold tracking-tight text-[var(--ink)] whitespace-nowrap">
+        资金净值曲线
+      </h2>
+      {latest && (
+        <span class="equity-readout text-xs font-mono tabular-nums text-[var(--ink-secondary)] truncate">
+          {latest.date} · 净值 {latest.net_value.toFixed(3)} · 纪律 {latest.discipline}/10
+        </span>
+      )}
+    </div>
+
+    {series.length > 0 && (
+      <div class="inline-flex border border-[var(--line)] bg-[var(--canvas)] p-0.5 shrink-0" role="tablist" aria-label="曲线指标切换">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="true"
+          data-mode="nav"
+          class="equity-mode-btn px-3 py-1 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
+        >
+          净值走势
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          data-mode="disc"
+          class="equity-mode-btn px-3 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors duration-150 whitespace-nowrap cursor-pointer"
+        >
+          纪律评分
+        </button>
+      </div>
+    )}
+  </div>
+
+  <div class="p-5 flex-1 flex flex-col justify-center">
+    {series.length === 0 ? (
+      <div class="py-12 text-center">
+        <p class="text-sm text-[var(--ink-secondary)]">暂无复盘净值数据</p>
+        <p class="mt-1 text-xs text-[var(--ink-muted)]">在 src/content/logs 中添加复盘记录后将自动绘制曲线。</p>
+      </div>
+    ) : (
+      <div class="relative w-full">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          class="w-full h-auto block select-none overflow-visible"
+          role="img"
+          aria-label="资金净值与纪律评分趋势图"
+        >
+          <defs>
+            <linearGradient id="navAreaFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.18" />
+              <stop offset="100%" stop-color="var(--accent)" stop-opacity="0" />
+            </linearGradient>
+            <linearGradient id="discAreaFill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="var(--gain)" stop-opacity="0.16" />
+              <stop offset="100%" stop-color="var(--gain)" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+
+          <!-- NAV Layer -->
+          <g class="layer-nav">
+            {navGridVals.map((v) => (
+              <g>
+                <line
+                  x1={PAD.left}
+                  x2={W - PAD.right}
+                  y1={yNav(v)}
+                  y2={yNav(v)}
+                  stroke="var(--chart-grid)"
+                  stroke-width="1"
+                />
+                <text
+                  x={PAD.left - 10}
+                  y={yNav(v) + 3.5}
+                  text-anchor="end"
+                  fill="var(--chart-axis)"
+                  class="font-mono text-[10px] tabular-nums"
+                >
+                  {v.toFixed(3)}
+                </text>
+              </g>
+            ))}
+
+            {showBaseline && (
+              <g>
+                <line
+                  x1={PAD.left}
+                  x2={W - PAD.right}
+                  y1={baselineY}
+                  y2={baselineY}
+                  stroke="var(--line-strong)"
+                  stroke-width="1"
+                  stroke-dasharray="4 4"
+                />
+                <text
+                  x={W - PAD.right}
+                  y={baselineY - 5}
+                  text-anchor="end"
+                  fill="var(--ink-muted)"
+                  class="font-mono text-[9px]"
+                >
+                  基准 1.000
+                </text>
+              </g>
+            )}
+
+            {navPoints.length > 1 && (
+              <>
+                <polygon points={navArea} fill="url(#navAreaFill)" />
+                <polyline
+                  points={navLine}
+                  fill="none"
+                  stroke="var(--accent)"
+                  stroke-width="2"
+                  stroke-linejoin="miter"
+                />
+              </>
+            )}
+
+            {navPoints.map((p, idx) => (
+              <g class="chart-node cursor-pointer" data-idx={idx} data-href={`/logs/${p.slug}`}>
+                <line
+                  x1={p.cx}
+                  x2={p.cx}
+                  y1={PAD.top}
+                  y2={PAD.top + ih}
+                  stroke="var(--accent)"
+                  stroke-width="1"
+                  stroke-dasharray="2 3"
+                  class="node-guide opacity-0 transition-opacity duration-150"
+                />
+                <rect
+                  x={p.cx - 4}
+                  y={p.cyNav - 4}
+                  width="8"
+                  height="8"
+                  fill="var(--surface)"
+                  stroke="var(--accent)"
+                  stroke-width="2"
+                  class="node-marker transition-transform duration-150"
+                />
+                <rect
+                  x={p.cx - 24}
+                  y={PAD.top}
+                  width="48"
+                  height={ih}
+                  fill="transparent"
+                />
+                <title>{`${p.date} · ${p.title} · 净值 ${p.net_value.toFixed(3)} · 纪律 ${p.discipline}/10`}</title>
+              </g>
+            ))}
+          </g>
+
+          <!-- Discipline Layer -->
+          <g class="layer-disc hidden">
+            {discGridVals.map((v) => (
+              <g>
+                <line
+                  x1={PAD.left}
+                  x2={W - PAD.right}
+                  y1={yDisc(v)}
+                  y2={yDisc(v)}
+                  stroke="var(--chart-grid)"
+                  stroke-width="1"
+                />
+                <text
+                  x={PAD.left - 10}
+                  y={yDisc(v) + 3.5}
+                  text-anchor="end"
+                  fill="var(--chart-axis)"
+                  class="font-mono text-[10px] tabular-nums"
+                >
+                  {v.toFixed(0)}分
+                </text>
+              </g>
+            ))}
+
+            {navPoints.length > 1 && (
+              <>
+                <polygon points={discArea} fill="url(#discAreaFill)" />
+                <polyline
+                  points={discLine}
+                  fill="none"
+                  stroke="var(--gain)"
+                  stroke-width="2"
+                  stroke-linejoin="miter"
+                />
+              </>
+            )}
+
+            {navPoints.map((p, idx) => (
+              <g class="chart-node cursor-pointer" data-idx={idx} data-href={`/logs/${p.slug}`}>
+                <line
+                  x1={p.cx}
+                  x2={p.cx}
+                  y1={PAD.top}
+                  y2={PAD.top + ih}
+                  stroke="var(--gain)"
+                  stroke-width="1"
+                  stroke-dasharray="2 3"
+                  class="node-guide opacity-0 transition-opacity duration-150"
+                />
+                <rect
+                  x={p.cx - 4}
+                  y={p.cyDisc - 4}
+                  width="8"
+                  height="8"
+                  fill="var(--surface)"
+                  stroke="var(--gain)"
+                  stroke-width="2"
+                />
+                <rect
+                  x={p.cx - 24}
+                  y={PAD.top}
+                  width="48"
+                  height={ih}
+                  fill="transparent"
+                />
+                <title>{`${p.date} · ${p.title} · 纪律 ${p.discipline}/10`}</title>
+              </g>
+            ))}
+          </g>
+
+          <!-- X-axis date ticks -->
+          {xAxisLabels.map((p) => (
+            <text
+              x={p.cx}
+              y={H - 8}
+              text-anchor={p.anchor}
+              fill="var(--chart-axis)"
+              class="font-mono text-[10px] tabular-nums"
+            >
+              {p.date}
+            </text>
+          ))}
+        </svg>
+      </div>
+    )}
+  </div>
+
+  {latest && (
+    <div class="px-5 py-3 border-t border-[var(--line)] bg-[var(--surface-subtle)]/50 flex flex-wrap items-center justify-between gap-3 text-xs text-[var(--ink-muted)]">
+      <span class="equity-active-title truncate">{latest.title}</span>
+      <span class="font-mono whitespace-nowrap shrink-0">点击节点直达当日复盘</span>
+    </div>
+  )}
+</section>
+
+<script>
+  interface PointData {
+    slug: string;
+    date: string;
+    net_value: number;
+    discipline: number;
+    title: string;
+    tradeCount: number;
+  }
+
+  document.querySelectorAll<HTMLElement>('.equity-panel').forEach((panel) => {
+    const raw = panel.dataset.series;
+    if (!raw) return;
+    const points: PointData[] = JSON.parse(raw);
+    if (!points.length) return;
+
+    const readout = panel.querySelector<HTMLElement>('.equity-readout');
+    const titleEl = panel.querySelector<HTMLElement>('.equity-active-title');
+    const navLayer = panel.querySelector<SVGGElement>('.layer-nav');
+    const discLayer = panel.querySelector<SVGGElement>('.layer-disc');
+    const modeBtns = panel.querySelectorAll<HTMLButtonElement>('.equity-mode-btn');
+
+    const updateReadout = (idx: number) => {
+      const p = points[idx];
+      if (!p) return;
+      if (readout) {
+        readout.textContent = `${p.date} · 净值 ${p.net_value.toFixed(3)} · 纪律 ${p.discipline}/10 · ${p.tradeCount} 笔交割`;
+      }
+      if (titleEl) {
+        titleEl.textContent = p.title;
+      }
+    };
+
+    modeBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.dataset.mode;
+        const isNav = mode === 'nav';
+        navLayer?.classList.toggle('hidden', !isNav);
+        discLayer?.classList.toggle('hidden', isNav);
+        modeBtns.forEach((b) => {
+          const active = b.dataset.mode === mode;
+          b.setAttribute('aria-selected', String(active));
+          b.classList.toggle('bg-[var(--surface-subtle)]', active);
+          b.classList.toggle('text-[var(--ink)]', active);
+          b.classList.toggle('text-[var(--ink-muted)]', !active);
+        });
+      });
+    });
+
+    panel.querySelectorAll<SVGGElement>('.chart-node').forEach((node) => {
+      const idx = Number(node.dataset.idx ?? 0);
+      const guide = node.querySelector<SVGLineElement>('.node-guide');
+      node.addEventListener('mouseenter', () => {
+        updateReadout(idx);
+        guide?.classList.remove('opacity-0');
+        guide?.classList.add('opacity-100');
+      });
+      node.addEventListener('mouseleave', () => {
+        guide?.classList.remove('opacity-100');
+        guide?.classList.add('opacity-0');
+        updateReadout(points.length - 1);
+      });
+      node.addEventListener('click', () => {
+        const href = node.dataset.href;
+        if (href) window.location.href = href;
+      });
+    });
+  });
+</script>

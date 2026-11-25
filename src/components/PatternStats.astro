@@ -1,0 +1,165 @@
+---
+import { getCollection } from 'astro:content';
+import { getLogsSorted, aggregatePatternStats } from '../lib/trades';
+
+const logs = await getLogsSorted();
+const stats = aggregatePatternStats(logs);
+const playbook = await getCollection('playbook');
+const patternToSlug = new Map(
+  playbook.map((p) => [p.data.pattern ?? p.data.title, `/playbook/${p.id}`])
+);
+const hasTrades = stats.length > 0;
+---
+
+<section class="pattern-matrix border border-[var(--line)] bg-[var(--surface)]">
+  <div class="px-5 py-4 border-b border-[var(--line)] flex flex-wrap items-center justify-between gap-4">
+    <div>
+      <h2 class="text-sm font-semibold tracking-tight text-[var(--ink)]">战法胜率矩阵</h2>
+      <p class="mt-0.5 text-xs text-[var(--ink-muted)]">仅统计已决 WIN / LOSS 交易，持仓 HOLD 不计入胜率分母</p>
+    </div>
+
+    {hasTrades && (
+      <div class="inline-flex border border-[var(--line)] bg-[var(--canvas)] p-0.5 shrink-0" role="group" aria-label="排序方式">
+        <button
+          type="button"
+          data-sort="total"
+          class="sort-btn px-2.5 py-1 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+        >
+          按出手数
+        </button>
+        <button
+          type="button"
+          data-sort="winRate"
+          class="sort-btn px-2.5 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+        >
+          按胜率
+        </button>
+        <button
+          type="button"
+          data-sort="avgPnl"
+          class="sort-btn px-2.5 py-1 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+        >
+          按均盈亏
+        </button>
+      </div>
+    )}
+  </div>
+
+  {!hasTrades ? (
+    <div class="p-8 text-center">
+      <p class="text-sm text-[var(--ink-secondary)]">暂无交割统计数据</p>
+      <p class="mt-1 text-xs text-[var(--ink-muted)]">在复盘记录中录入交易后，各战法的胜率与盈亏将自动汇总于此。</p>
+    </div>
+  ) : (
+    <div class="overflow-x-auto">
+      <table class="w-full border-collapse text-sm">
+        <thead>
+          <tr class="border-b border-[var(--line)] bg-[var(--surface-subtle)]/60 text-xs text-[var(--ink-muted)]">
+            <th class="py-2.5 pl-5 pr-3 text-left font-medium w-10">#</th>
+            <th class="py-2.5 px-3 text-left font-medium">战法名称</th>
+            <th class="py-2.5 px-3 text-right font-medium font-mono">出手</th>
+            <th class="py-2.5 px-3 text-right font-medium font-mono">胜 / 负 / 持</th>
+            <th class="py-2.5 px-3 text-right font-medium font-mono">胜率</th>
+            <th class="py-2.5 pl-3 pr-5 text-right font-medium font-mono">均盈亏</th>
+          </tr>
+        </thead>
+        <tbody class="pattern-tbody divide-y divide-[var(--line)]">
+          {stats.map((s, idx) => {
+            const href = patternToSlug.get(s.pattern);
+            const winPct = s.winRate != null ? Math.round(s.winRate * 100) : null;
+            return (
+              <tr
+                class="hover:bg-[var(--surface-subtle)]/60 transition-colors duration-150"
+                data-total={s.total}
+                data-winrate={s.winRate ?? -1}
+                data-avgpnl={s.avgPnl ?? -9999}
+              >
+                <td class="row-rank py-3.5 pl-5 pr-3 font-mono text-xs text-[var(--ink-muted)] tabular-nums">
+                  {String(idx + 1).padStart(2, '0')}
+                </td>
+                <td class="py-3.5 px-3 font-medium text-[var(--ink)]">
+                  {href ? (
+                    <a
+                      href={href}
+                      class="hover:text-[var(--accent)] underline decoration-[var(--line-strong)] underline-offset-4 hover:decoration-[var(--accent)] transition-colors"
+                    >
+                      {s.pattern}
+                    </a>
+                  ) : (
+                    <span>{s.pattern}</span>
+                  )}
+                </td>
+                <td class="py-3.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                  {s.total}
+                </td>
+                <td class="py-3.5 px-3 text-right font-mono tabular-nums text-xs">
+                  <span class="text-[var(--gain)] font-semibold">{s.wins}胜</span>
+                  <span class="text-[var(--ink-muted)] mx-1">/</span>
+                  <span class="text-[var(--loss)] font-semibold">{s.losses}负</span>
+                  <span class="text-[var(--ink-muted)] mx-1">/</span>
+                  <span class="text-[var(--ink-secondary)]">{s.holds}持</span>
+                </td>
+                <td class="py-3.5 px-3 text-right font-mono tabular-nums">
+                  {winPct == null ? (
+                    <span class="text-[var(--ink-muted)]">—</span>
+                  ) : (
+                    <div class="inline-flex items-center justify-end gap-2.5 min-w-[96px]">
+                      <div class="w-12 h-1.5 bg-[var(--surface-subtle)] overflow-hidden hidden sm:block">
+                        <div
+                          class="h-full"
+                          style={`width:${winPct}%;background:${winPct >= 50 ? 'var(--gain)' : 'var(--loss)'}`}
+                        />
+                      </div>
+                      <span class={winPct >= 50 ? 'text-[var(--gain)] font-semibold' : 'text-[var(--loss)] font-semibold'}>
+                        {(s.winRate! * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                </td>
+                <td class="py-3.5 pl-3 pr-5 text-right font-mono tabular-nums">
+                  {s.avgPnl == null ? (
+                    <span class="text-[var(--ink-muted)]">—</span>
+                  ) : (
+                    <span class={s.avgPnl >= 0 ? 'text-[var(--gain)] font-semibold' : 'text-[var(--loss)] font-semibold'}>
+                      {s.avgPnl > 0 ? `+${s.avgPnl.toFixed(1)}%` : `${s.avgPnl.toFixed(1)}%`}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  )}
+</section>
+
+<script>
+  document.querySelectorAll<HTMLElement>('.pattern-matrix').forEach((section) => {
+    const tbody = section.querySelector<HTMLTableSectionElement>('.pattern-tbody');
+    const buttons = section.querySelectorAll<HTMLButtonElement>('.sort-btn');
+    if (!tbody || !buttons.length) return;
+
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.sort as 'total' | 'winRate' | 'avgPnl';
+        const rows = Array.from(tbody.querySelectorAll<HTMLTableRowElement>('tr'));
+        const attr = key === 'total' ? 'total' : key === 'winRate' ? 'winrate' : 'avgpnl';
+
+        rows.sort((a, b) => Number(b.dataset[attr] ?? 0) - Number(a.dataset[attr] ?? 0));
+        rows.forEach((row, i) => {
+          const rankCell = row.querySelector<HTMLElement>('.row-rank');
+          if (rankCell) rankCell.textContent = String(i + 1).padStart(2, '0');
+          tbody.appendChild(row);
+        });
+
+        buttons.forEach((b) => {
+          const active = b.dataset.sort === key;
+          b.classList.toggle('bg-[var(--surface-subtle)]', active);
+          b.classList.toggle('text-[var(--ink)]', active);
+          b.classList.toggle('text-[var(--ink-muted)]', !active);
+        });
+      });
+    });
+  });
+</script>

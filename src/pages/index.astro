@@ -1,0 +1,487 @@
+---
+import Base from '../layouts/Base.astro';
+import EquityCurve from '../components/EquityCurve.astro';
+import PatternStats from '../components/PatternStats.astro';
+import { getLogsSorted, aggregatePatternStats } from '../lib/trades';
+import { getCollection } from 'astro:content';
+
+const logs = await getLogsSorted();
+const patternStats = aggregatePatternStats(logs);
+const playbook = (await getCollection('playbook')).sort((a, b) => a.id.localeCompare(b.id));
+const rules = await getCollection('rules');
+
+const [featured] = logs;
+const dayCount = logs.length;
+const latestNv = featured?.data.net_value ?? null;
+const firstNv = logs.length ? logs[logs.length - 1].data.net_value : null;
+const avgDisciplineNum =
+  dayCount > 0 ? logs.reduce((s, l) => s + l.data.discipline, 0) / dayCount : null;
+const avgDiscipline = avgDisciplineNum != null ? avgDisciplineNum.toFixed(1) : '—';
+const totalTrades = logs.reduce((s, l) => s + l.data.trades.length, 0);
+const nvChange =
+  latestNv != null && firstNv ? ((latestNv - firstNv) / firstNv) * 100 : null;
+const latestDate = featured ? featured.data.date.toISOString().slice(0, 10) : '—';
+
+const statByPattern = new Map(patternStats.map((s) => [s.pattern, s]));
+---
+
+<Base title="复盘手账">
+  <!-- Row 1: Architectural Masthead & 4-Column Hairline KPI Strip -->
+  <section class="mb-8">
+    <div class="flex flex-col sm:flex-row sm:items-end justify-between gap-4 pb-6">
+      <div>
+        <h1 class="text-3xl sm:text-4xl font-bold tracking-tight text-[var(--ink)]">
+          实盘复盘台
+        </h1>
+        <p class="mt-2 text-sm text-[var(--ink-secondary)]">
+          真实操作 · 认知经验 · 数据做证人
+        </p>
+      </div>
+      <div class="flex items-center gap-3 text-xs font-mono tabular-nums text-[var(--ink-muted)]">
+        <span>最近更新 {latestDate}</span>
+        <span aria-hidden="true">/</span>
+        <span>累计 {dayCount} 篇记录</span>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 border-y border-[var(--line)] divide-y sm:divide-y-0 lg:divide-x divide-[var(--line)] bg-[var(--surface)]">
+      <div class="px-5 py-4 border-r border-[var(--line)] lg:border-r-0">
+        <div class="text-xs text-[var(--ink-muted)]">最新账户净值</div>
+        <div class="mt-1.5 flex items-baseline gap-2.5">
+          <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
+            {latestNv == null ? '—' : latestNv.toFixed(3)}
+          </span>
+          {latestNv != null && (
+            <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
+              基准 1.000
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div class="px-5 py-4">
+        <div class="text-xs text-[var(--ink-muted)]">记录区间收益</div>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <span
+            class:list={[
+              'font-mono text-2xl sm:text-3xl font-bold tabular-nums',
+              nvChange == null
+                ? 'text-[var(--ink)]'
+                : nvChange >= 0
+                  ? 'text-[var(--gain)]'
+                  : 'text-[var(--loss)]',
+            ]}
+          >
+            {nvChange == null ? '—' : `${nvChange > 0 ? '+' : ''}${nvChange.toFixed(2)}%`}
+          </span>
+          {nvChange != null && (
+            <span class="text-xs text-[var(--ink-muted)]">
+              {nvChange >= 0 ? '正收益' : '回撤中'}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div class="px-5 py-4 border-r border-[var(--line)] lg:border-r-0">
+        <div class="text-xs text-[var(--ink-muted)]">平均纪律评分</div>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
+            {avgDiscipline}
+          </span>
+          <span class="font-mono text-xs text-[var(--ink-muted)]">/ 10</span>
+        </div>
+        {avgDisciplineNum != null && (
+          <div class="mt-2 grid grid-cols-10 gap-1" aria-hidden="true">
+            {Array.from({ length: 10 }).map((_, idx) => (
+              <span
+                class:list={[
+                  'h-1 block',
+                  idx < Math.round(avgDisciplineNum)
+                    ? 'bg-[var(--accent)]'
+                    : 'bg-[var(--line)]',
+                ]}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div class="px-5 py-4">
+        <div class="text-xs text-[var(--ink-muted)]">实盘交割样本</div>
+        <div class="mt-1.5 flex items-baseline gap-2">
+          <span class="font-mono text-2xl sm:text-3xl font-bold tabular-nums text-[var(--ink)]">
+            {totalTrades}
+          </span>
+          <span class="text-xs text-[var(--ink-muted)]">
+            笔交割 · {patternStats.length} 种战法
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Row 2: Dominant Focal Deck (7/5 Split, Stretched Heights) -->
+  <section class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch mb-12">
+    <div class="lg:col-span-7 flex flex-col">
+      <EquityCurve />
+    </div>
+
+    <div class="lg:col-span-5 flex flex-col">
+      {featured ? (
+        <article class="flex flex-col justify-between h-full border border-[var(--line)] bg-[var(--surface)]">
+          <div class="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between gap-4">
+            <span class="text-xs font-medium text-[var(--accent)]">最新一期复盘</span>
+            <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
+              {featured.data.date.toISOString().slice(0, 10)} · 纪律 {featured.data.discipline}/10
+            </span>
+          </div>
+
+          <div class="p-5 flex-1 flex flex-col justify-between gap-5">
+            <div>
+              <h2 class="text-xl font-bold leading-snug tracking-tight text-[var(--ink)]">
+                <a
+                  href={`/logs/${featured.id}`}
+                  class="hover:text-[var(--accent)] transition-colors duration-150"
+                >
+                  {featured.data.title}
+                </a>
+              </h2>
+              <p class="mt-3 text-sm leading-relaxed text-[var(--ink-secondary)]">
+                {featured.data.summary}
+              </p>
+            </div>
+
+            {featured.data.trades.length > 0 ? (
+              <div class="border-t border-[var(--line)] pt-4">
+                <div class="text-xs text-[var(--ink-muted)] mb-2.5">当日交割明细</div>
+                <div class="divide-y divide-[var(--line)] border-y border-[var(--line)]">
+                  {featured.data.trades.map((t) => (
+                    <div class="py-2 flex items-center justify-between gap-3 text-xs">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span
+                          class:list={[
+                            'font-mono font-semibold shrink-0',
+                            t.action === 'BUY' ? 'text-[var(--accent)]' : 'text-[var(--gain)]',
+                          ]}
+                        >
+                          {t.action === 'BUY' ? '买' : '卖'}
+                        </span>
+                        <span class="font-mono text-[var(--ink-muted)] tabular-nums shrink-0">
+                          {t.code}
+                        </span>
+                        <span class="font-medium text-[var(--ink)] truncate">{t.name}</span>
+                        <span class="text-[var(--ink-muted)] hidden sm:inline truncate">
+                          · {t.pattern}
+                        </span>
+                      </div>
+                      <div class="font-mono tabular-nums shrink-0 text-right">
+                        {t.pnl_pct != null ? (
+                          <span class={t.pnl_pct >= 0 ? 'text-[var(--gain)] font-semibold' : 'text-[var(--loss)] font-semibold'}>
+                            {t.pnl_pct > 0 ? `+${t.pnl_pct}%` : `${t.pnl_pct}%`}
+                          </span>
+                        ) : (
+                          <span class="text-[var(--ink-secondary)]">
+                            {t.result === 'HOLD' ? '持仓' : `@${t.price.toFixed(2)}`}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div class="border-t border-[var(--line)] pt-4 text-xs text-[var(--ink-muted)]">
+                当日空仓观望，无交割记录。
+              </div>
+            )}
+          </div>
+
+          <div class="px-5 py-3.5 border-t border-[var(--line)] bg-[var(--surface-subtle)]/50 flex items-center justify-between gap-4">
+            <span class="font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
+              当日净值 <strong class="text-[var(--ink)]">{featured.data.net_value.toFixed(3)}</strong>
+            </span>
+            <a
+              href={`/logs/${featured.id}`}
+              class="text-xs font-semibold text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors whitespace-nowrap"
+            >
+              进入完整复盘 →
+            </a>
+          </div>
+        </article>
+      ) : (
+        <div class="flex items-center justify-center h-full border border-[var(--line)] bg-[var(--surface)] p-8 text-sm text-[var(--ink-muted)]">
+          暂无复盘记录。
+        </div>
+      )}
+    </div>
+  </section>
+
+  <!-- Row 3: Interactive Searchable & Filterable Review Archive -->
+  <section id="archive" class="mb-12 scroll-mt-20">
+    <div class="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-[var(--line)]">
+      <div>
+        <div class="flex items-baseline gap-3">
+          <h2 class="text-lg font-semibold tracking-tight text-[var(--ink)]">复盘档案</h2>
+          <a href="/logs" class="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] whitespace-nowrap">
+            独立档案页 →
+          </a>
+        </div>
+        <p class="mt-0.5 text-xs text-[var(--ink-muted)]">按日期倒序归档，支持检索标的、代码、战法或按仓位状态筛选</p>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="relative">
+          <input
+            id="archive-search"
+            type="search"
+            placeholder="搜索标题、标的或战法…"
+            aria-label="搜索复盘档案"
+            class="h-9 w-56 sm:w-64 px-3 text-xs bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent)] transition-colors"
+          />
+        </div>
+
+        <div class="inline-flex border border-[var(--line)] bg-[var(--surface)] p-0.5" role="group" aria-label="按交易状态筛选">
+          <button
+            type="button"
+            data-filter="all"
+            class="archive-filter-btn h-8 px-3 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            全部 ({logs.length})
+          </button>
+          <button
+            type="button"
+            data-filter="traded"
+            class="archive-filter-btn h-8 px-3 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            含交割
+          </button>
+          <button
+            type="button"
+            data-filter="flat"
+            class="archive-filter-btn h-8 px-3 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+          >
+            空仓观望
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="border-x border-b border-[var(--line)] bg-[var(--surface)]">
+      <div class="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-[var(--line)] bg-[var(--surface-subtle)]/60 text-xs text-[var(--ink-muted)]">
+        <div class="col-span-2 font-mono">日期</div>
+        <div class="col-span-6">复盘摘要与涉及战法</div>
+        <div class="col-span-1 text-right font-mono">净值</div>
+        <div class="col-span-1 text-right font-mono">纪律</div>
+        <div class="col-span-2 text-right">交割</div>
+      </div>
+
+      <ul id="archive-list" class="divide-y divide-[var(--line)]">
+        {logs.map((l) => {
+          const dateStr = l.data.date.toISOString().slice(0, 10);
+          const patterns = [...new Set(l.data.trades.map((t) => t.pattern))];
+          const searchHaystack = [
+            l.data.title,
+            l.data.summary,
+            dateStr,
+            ...l.data.trades.flatMap((t) => [t.code, t.name, t.pattern]),
+          ]
+            .join(' ')
+            .toLowerCase();
+          return (
+            <li
+              class="archive-row group"
+              data-has-trades={l.data.trades.length > 0 ? 'true' : 'false'}
+              data-search={searchHaystack}
+            >
+              <a
+                href={`/logs/${l.id}`}
+                class="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-5 py-4 items-center hover:bg-[var(--surface-subtle)]/60 transition-colors duration-150"
+              >
+                <div class="md:col-span-2 flex items-center justify-between md:block">
+                  <span class="font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
+                    {dateStr}
+                  </span>
+                  <span class="md:hidden font-mono text-xs tabular-nums text-[var(--ink)]">
+                    净值 {l.data.net_value.toFixed(3)} · 纪律 {l.data.discipline}/10
+                  </span>
+                </div>
+
+                <div class="md:col-span-6 min-w-0">
+                  <div class="font-semibold text-sm text-[var(--ink)] group-hover:text-[var(--accent)] transition-colors truncate">
+                    {l.data.title}
+                  </div>
+                  <div class="mt-1 text-xs text-[var(--ink-secondary)] line-clamp-1">
+                    {l.data.summary}
+                  </div>
+                  {patterns.length > 0 && (
+                    <div class="mt-1.5 text-[11px] font-mono text-[var(--ink-muted)]">
+                      {patterns.join(' · ')}
+                    </div>
+                  )}
+                </div>
+
+                <div class="hidden md:block md:col-span-1 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
+                  {l.data.net_value.toFixed(3)}
+                </div>
+
+                <div class="hidden md:block md:col-span-1 text-right font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
+                  {l.data.discipline}/10
+                </div>
+
+                <div class="hidden md:flex md:col-span-2 items-center justify-end gap-3 text-xs">
+                  <span class="font-mono tabular-nums text-[var(--ink-muted)]">
+                    {l.data.trades.length > 0 ? `${l.data.trades.length} 笔交割` : '空仓'}
+                  </span>
+                  <span class="text-[var(--ink-muted)] group-hover:text-[var(--accent)] transition-colors">
+                    →
+                  </span>
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div id="archive-empty" class="hidden px-5 py-10 text-center">
+        <p class="text-sm text-[var(--ink-secondary)]">没有符合当前条件的复盘记录</p>
+        <button
+          id="archive-reset"
+          type="button"
+          class="mt-3 h-8 px-3.5 text-xs font-medium border border-[var(--line-strong)] bg-[var(--canvas)] text-[var(--ink)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+        >
+          重置筛选
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Row 4: Analytical Pattern Matrix + Playbook & Iron Rules Index -->
+  <section class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+    <div class="lg:col-span-8">
+      <PatternStats />
+    </div>
+
+    <div class="lg:col-span-4 flex flex-col gap-6">
+      <div class="border border-[var(--line)] bg-[var(--surface)]">
+        <div class="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between gap-4">
+          <h2 class="text-sm font-semibold text-[var(--ink)]">战法体系</h2>
+          <a href="/playbook" class="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] whitespace-nowrap">
+            全部手册 →
+          </a>
+        </div>
+        <ul class="divide-y divide-[var(--line)]">
+          {playbook.map((p, idx) => {
+            const key = p.data.pattern ?? p.data.title;
+            const st = statByPattern.get(key);
+            return (
+              <li>
+                <a
+                  href={`/playbook/${p.id}`}
+                  class="flex items-baseline justify-between gap-3 px-5 py-3.5 hover:bg-[var(--surface-subtle)]/60 transition-colors"
+                >
+                  <div class="min-w-0">
+                    <span class="font-mono text-xs text-[var(--ink-muted)] mr-2">
+                      {String(idx + 1).padStart(2, '0')}.
+                    </span>
+                    <span class="text-sm font-medium text-[var(--ink)]">{p.data.title}</span>
+                  </div>
+                  <span class="font-mono text-xs tabular-nums shrink-0 text-[var(--ink-muted)]">
+                    {st
+                      ? st.winRate != null
+                        ? `${Math.round(st.winRate * 100)}% · ${st.total}笔`
+                        : `${st.total}笔`
+                      : '0笔'}
+                  </span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div class="border border-[var(--line)] bg-[var(--surface)]">
+        <div class="px-5 py-4 border-b border-[var(--line)] flex items-center justify-between gap-4">
+          <h2 class="text-sm font-semibold text-[var(--ink)]">交易铁律</h2>
+          <a href="/rules" class="text-xs text-[var(--accent)] hover:text-[var(--accent-hover)] whitespace-nowrap">
+            查看全文 →
+          </a>
+        </div>
+        <ul class="divide-y divide-[var(--line)]">
+          {rules.map((r, idx) => (
+            <li>
+              <a
+                href={`/rules/${r.id}`}
+                class="flex items-center justify-between gap-3 px-5 py-3.5 hover:bg-[var(--surface-subtle)]/60 transition-colors"
+              >
+                <span class="text-sm font-medium text-[var(--ink)]">
+                  <span class="font-mono text-xs text-[var(--ink-muted)] mr-2">
+                    {String(idx + 1).padStart(2, '0')}.
+                  </span>
+                  {r.data.title}
+                </span>
+                <span class="text-xs text-[var(--ink-muted)]">→</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  </section>
+</Base>
+
+<script>
+  const searchInput = document.getElementById('archive-search') as HTMLInputElement | null;
+  const filterBtns = document.querySelectorAll<HTMLButtonElement>('.archive-filter-btn');
+  const rows = document.querySelectorAll<HTMLLIElement>('.archive-row');
+  const emptyBox = document.getElementById('archive-empty');
+  const resetBtn = document.getElementById('archive-reset');
+
+  let activeFilter: 'all' | 'traded' | 'flat' = 'all';
+
+  function applyArchiveFilters() {
+    const q = (searchInput?.value ?? '').trim().toLowerCase();
+    let visible = 0;
+
+    rows.forEach((row) => {
+      const hasTrades = row.dataset.hasTrades === 'true';
+      const hay = row.dataset.search ?? '';
+      const matchFilter =
+        activeFilter === 'all' ||
+        (activeFilter === 'traded' && hasTrades) ||
+        (activeFilter === 'flat' && !hasTrades);
+      const matchQuery = !q || hay.includes(q);
+      const show = matchFilter && matchQuery;
+      row.classList.toggle('hidden', !show);
+      if (show) visible++;
+    });
+
+    emptyBox?.classList.toggle('hidden', visible > 0);
+  }
+
+  searchInput?.addEventListener('input', applyArchiveFilters);
+
+  filterBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeFilter = (btn.dataset.filter as 'all' | 'traded' | 'flat') ?? 'all';
+      filterBtns.forEach((b) => {
+        const isCurrent = b.dataset.filter === activeFilter;
+        b.classList.toggle('bg-[var(--surface-subtle)]', isCurrent);
+        b.classList.toggle('text-[var(--ink)]', isCurrent);
+        b.classList.toggle('text-[var(--ink-muted)]', !isCurrent);
+      });
+      applyArchiveFilters();
+    });
+  });
+
+  resetBtn?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    activeFilter = 'all';
+    filterBtns.forEach((b) => {
+      const isCurrent = b.dataset.filter === 'all';
+      b.classList.toggle('bg-[var(--surface-subtle)]', isCurrent);
+      b.classList.toggle('text-[var(--ink)]', isCurrent);
+      b.classList.toggle('text-[var(--ink-muted)]', !isCurrent);
+    });
+    applyArchiveFilters();
+  });
+</script>

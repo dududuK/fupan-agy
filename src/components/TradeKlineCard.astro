@@ -1,0 +1,399 @@
+---
+import { getTradesFor } from '../lib/trades';
+
+interface Props {
+  code: string;
+  date: string; // YYYY-MM-DD
+}
+
+const { code, date } = Astro.props;
+const trades = await getTradesFor(code, date);
+const klineUrl = `/data/trades-kline/${date}-${code}.json`;
+const primaryName = trades[0]?.name ?? '';
+const marks = trades.map((t) => ({
+  date,
+  side: t.action,
+  price: t.price,
+  label: `${t.action === 'BUY' ? '买' : '卖'} ${t.price.toFixed(2)}`,
+}));
+---
+
+<figure
+  class="kline-terminal my-7 border border-[var(--line)] bg-[var(--surface)]"
+  data-url={klineUrl}
+  data-date={date}
+  data-code={code}
+  data-marks={JSON.stringify(marks)}
+>
+  <div class="px-4 py-3 border-b border-[var(--line)] flex flex-wrap items-center justify-between gap-3">
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+      <span class="font-mono font-semibold text-sm text-[var(--ink)] tabular-nums">{code}</span>
+      {primaryName && <span class="font-medium text-[var(--ink)]">{primaryName}</span>}
+      {trades.length > 0 ? (
+        trades.map((t) => (
+          <span class="font-mono tabular-nums text-[var(--ink-secondary)]">
+            <span class={t.action === 'BUY' ? 'text-[var(--accent)] font-semibold' : 'text-[var(--gain)] font-semibold'}>
+              {t.action === 'BUY' ? '买入 B' : '卖出 S'}
+            </span>
+            {' @'}{t.price.toFixed(2)} · {t.pattern}
+            {t.result ? ` · ${t.result === 'WIN' ? '止盈' : t.result === 'LOSS' ? '止损' : '持仓'}` : ''}
+            {t.pnl_pct != null ? ` (${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct}%)` : ''}
+          </span>
+        ))
+      ) : (
+        <span class="text-[var(--ink-muted)]">无当日交割记录</span>
+      )}
+    </div>
+
+    <div class="inline-flex items-center gap-1 border border-[var(--line)] bg-[var(--canvas)] p-0.5 shrink-0">
+      <button
+        type="button"
+        data-ma="ma5"
+        aria-pressed="true"
+        class="kline-ma-btn px-2 py-0.5 text-[11px] font-mono bg-[var(--surface-subtle)] text-[var(--chart-ma5)] cursor-pointer whitespace-nowrap"
+      >
+        MA5
+      </button>
+      <button
+        type="button"
+        data-ma="ma10"
+        aria-pressed="true"
+        class="kline-ma-btn px-2 py-0.5 text-[11px] font-mono bg-[var(--surface-subtle)] text-[var(--chart-ma10)] cursor-pointer whitespace-nowrap"
+      >
+        MA10
+      </button>
+    </div>
+  </div>
+
+  <!-- Live OHLCV HUD Strip -->
+  <div class="kline-hud px-4 py-2 border-b border-[var(--line)] bg-[var(--surface-subtle)]/50 flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] tabular-nums text-[var(--ink-secondary)]">
+    <span>日期 —</span>
+    <span>开 —</span>
+    <span>高 —</span>
+    <span>低 —</span>
+    <span>收 —</span>
+    <span>量 —</span>
+  </div>
+
+  <div class="relative bg-[var(--chart-bg)]">
+    <canvas class="kline-canvas w-full h-[320px] sm:h-[360px] block cursor-crosshair"></canvas>
+    <p class="kline-fallback px-4 py-8 text-center text-xs font-mono text-[var(--ink-muted)]">
+      K线数据加载中…（如本地缺失请运行 python3 scripts/fetch_kline.py 生成）
+    </p>
+  </div>
+</figure>
+
+<script>
+  interface KlineBar {
+    date: string;
+    open: number;
+    close: number;
+    high: number;
+    low: number;
+    volume: number;
+  }
+  interface Mark {
+    date: string;
+    side: 'BUY' | 'SELL';
+    price: number;
+    label: string;
+  }
+
+  function calcMA(bars: KlineBar[], period: number): (number | null)[] {
+    return bars.map((_, i) => {
+      if (i < period - 1) return null;
+      let sum = 0;
+      for (let j = i - period + 1; j <= i; j++) sum += bars[j].close;
+      return sum / period;
+    });
+  }
+
+  function cssVar(name: string, fallback: string): string {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+  }
+
+  function initKlineCard(el: HTMLElement) {
+    const canvas = el.querySelector<HTMLCanvasElement>('.kline-canvas');
+    const fallback = el.querySelector<HTMLElement>('.kline-fallback');
+    const hud = el.querySelector<HTMLElement>('.kline-hud');
+    const maBtns = el.querySelectorAll<HTMLButtonElement>('.kline-ma-btn');
+    if (!canvas) return;
+
+    let bars: KlineBar[] = [];
+    let marks: Mark[] = [];
+    let showMa5 = true;
+    let showMa10 = true;
+    let hoverIdx = -1;
+    let defaultIdx = -1;
+
+    const updateHud = (idx: number) => {
+      if (!hud || idx < 0 || idx >= bars.length) return;
+      const b = bars[idx];
+      const prevClose = idx > 0 ? bars[idx - 1].close : b.open;
+      const pct = prevClose ? ((b.close - prevClose) / prevClose) * 100 : 0;
+      const pctStr = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+      const pctColor = pct >= 0 ? 'var(--gain)' : 'var(--loss)';
+      const volText =
+        b.volume >= 10000 ? `${(b.volume / 10000).toFixed(2)}万` : b.volume.toFixed(0);
+      hud.innerHTML = [
+        `<span style="color:var(--ink);font-weight:600">${b.date}</span>`,
+        `<span>开 ${b.open.toFixed(2)}</span>`,
+        `<span>高 ${b.high.toFixed(2)}</span>`,
+        `<span>低 ${b.low.toFixed(2)}</span>`,
+        `<span>收 <strong style="color:${pctColor}">${b.close.toFixed(2)} (${pctStr})</strong></span>`,
+        `<span>量 ${volText}</span>`,
+      ].join('');
+    };
+
+    const draw = () => {
+      if (!bars.length) return;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const rect = canvas.getBoundingClientRect();
+      const W = Math.max(rect.width, 300);
+      const H = Math.max(rect.height, 260);
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.scale(dpr, dpr);
+
+      const bg = cssVar('--chart-bg', '#0c0f14');
+      const grid = cssVar('--chart-grid', '#1c222e');
+      const axis = cssVar('--chart-axis', '#64748b');
+      const up = cssVar('--gain', '#f04438');
+      const down = cssVar('--loss', '#12b76a');
+      const accent = cssVar('--accent', '#38bdf8');
+      const ma5Color = cssVar('--chart-ma5', '#38bdf8');
+      const ma10Color = cssVar('--chart-ma10', '#c084fc');
+      const ink = cssVar('--ink', '#f1f5f9');
+
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, W, H);
+
+      const padL = 56;
+      const padR = 16;
+      const padT = 16;
+      const padB = 24;
+      const volH = 62;
+      const gap = 14;
+      const plotW = W - padL - padR;
+      const priceH = H - padT - padB - volH - gap;
+      const volTop = padT + priceH + gap;
+
+      const n = bars.length;
+      const step = plotW / n;
+      const bodyW = Math.max(Math.min(step * 0.62, 16), 2);
+      const maxV = Math.max(...bars.map((b) => b.volume), 1);
+      const hi = Math.max(...bars.map((b) => b.high));
+      const lo = Math.min(...bars.map((b) => b.low));
+      const pPad = (hi - lo) * 0.08 || 1;
+      const pTop = hi + pPad;
+      const pBot = lo - pPad;
+
+      const xOf = (i: number) => padL + i * step + step / 2;
+      const yOf = (p: number) => padT + ((pTop - p) / (pTop - pBot)) * priceH;
+
+      // Price gridlines & labels
+      ctx.strokeStyle = grid;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = axis;
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      for (let i = 0; i <= 4; i++) {
+        const gy = Math.round(padT + (priceH * i) / 4) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(padL, gy);
+        ctx.lineTo(W - padR, gy);
+        ctx.stroke();
+        const priceVal = pTop - ((pTop - pBot) * i) / 4;
+        ctx.fillText(priceVal.toFixed(2), padL - 8, gy);
+      }
+
+      // Volume divider line
+      ctx.beginPath();
+      ctx.moveTo(padL, Math.round(volTop) + 0.5);
+      ctx.lineTo(W - padR, Math.round(volTop) + 0.5);
+      ctx.stroke();
+      ctx.fillText('VOL', padL - 8, volTop + 10);
+
+      // Candlesticks & Volume bars
+      bars.forEach((b, i) => {
+        const cx = xOf(i);
+        const isUp = b.close >= b.open;
+        const c = isUp ? up : down;
+        ctx.strokeStyle = c;
+        ctx.fillStyle = c;
+
+        // Wick
+        ctx.beginPath();
+        ctx.moveTo(Math.round(cx) + 0.5, yOf(b.high));
+        ctx.lineTo(Math.round(cx) + 0.5, yOf(b.low));
+        ctx.stroke();
+
+        // Body
+        const yO = yOf(b.open);
+        const yC = yOf(b.close);
+        const top = Math.min(yO, yC);
+        const h = Math.max(Math.abs(yC - yO), 1.5);
+        ctx.fillRect(cx - bodyW / 2, top, bodyW, h);
+
+        // Volume
+        const vh = (b.volume / maxV) * (volH - 6);
+        ctx.globalAlpha = 0.42;
+        ctx.fillRect(cx - bodyW / 2, volTop + volH - vh, bodyW, vh);
+        ctx.globalAlpha = 1;
+      });
+
+      // Moving averages
+      const drawMA = (period: number, color: string) => {
+        const vals = calcMA(bars, period);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        let started = false;
+        vals.forEach((v, i) => {
+          if (v == null) return;
+          const px = xOf(i);
+          const py = yOf(v);
+          if (!started) {
+            ctx.moveTo(px, py);
+            started = true;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        });
+        ctx.stroke();
+      };
+      if (showMa5) drawMA(5, ma5Color);
+      if (showMa10) drawMA(10, ma10Color);
+
+      // X-axis labels
+      ctx.fillStyle = axis;
+      ctx.textBaseline = 'top';
+      const labelIdxs = [0, Math.floor(n / 2), n - 1];
+      labelIdxs.forEach((idx, k) => {
+        if (!bars[idx]) return;
+        ctx.textAlign = k === 0 ? 'left' : k === 2 ? 'right' : 'center';
+        ctx.fillText(bars[idx].date, xOf(idx), H - padB + 6);
+      });
+
+      // B/S Execution Markers
+      const idxByDate = new Map(bars.map((b, i) => [b.date, i]));
+      for (const m of marks) {
+        let i = idxByDate.get(m.date);
+        if (i == null) {
+          let best = -1;
+          let bestDiff = Infinity;
+          bars.forEach((b, j) => {
+            const diff = Math.abs(Date.parse(b.date) - Date.parse(m.date));
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              best = j;
+            }
+          });
+          i = best;
+        }
+        if (i < 0 || i >= n) continue;
+        const cx = xOf(i);
+        const isBuy = m.side === 'BUY';
+        const py = isBuy
+          ? Math.min(yOf(bars[i].low) + 18, padT + priceH - 10)
+          : Math.max(yOf(bars[i].high) - 18, padT + 10);
+        const flagColor = isBuy ? accent : up;
+
+        ctx.fillStyle = flagColor;
+        ctx.fillRect(cx - 9, py - 9, 18, 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(isBuy ? 'B' : 'S', cx, py + 0.5);
+      }
+
+      // Interactive Crosshair
+      if (hoverIdx >= 0 && hoverIdx < n) {
+        const cx = Math.round(xOf(hoverIdx)) + 0.5;
+        const cy = Math.round(yOf(bars[hoverIdx].close)) + 0.5;
+        ctx.save();
+        ctx.strokeStyle = axis;
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cx, padT);
+        ctx.lineTo(cx, volTop + volH);
+        ctx.moveTo(padL, cy);
+        ctx.lineTo(W - padR, cy);
+        ctx.stroke();
+
+        // Highlight close price pill on Y-axis
+        ctx.setLineDash([]);
+        ctx.fillStyle = ink;
+        ctx.fillRect(2, cy - 8, padL - 6, 16);
+        ctx.fillStyle = bg;
+        ctx.font = '600 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(bars[hoverIdx].close.toFixed(2), padL - 7, cy + 0.5);
+        ctx.restore();
+      }
+    };
+
+    maBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const which = btn.dataset.ma;
+        if (which === 'ma5') showMa5 = !showMa5;
+        if (which === 'ma10') showMa10 = !showMa10;
+        const active = which === 'ma5' ? showMa5 : showMa10;
+        btn.setAttribute('aria-pressed', String(active));
+        btn.classList.toggle('opacity-40', !active);
+        draw();
+      });
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!bars.length) return;
+      const rect = canvas.getBoundingClientRect();
+      const padL = 56;
+      const padR = 16;
+      const plotW = Math.max(rect.width - padL - padR, 1);
+      const relX = e.clientX - rect.left - padL;
+      const idx = Math.max(0, Math.min(bars.length - 1, Math.floor((relX / plotW) * bars.length)));
+      if (idx !== hoverIdx) {
+        hoverIdx = idx;
+        updateHud(idx);
+        draw();
+      }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+      hoverIdx = -1;
+      if (defaultIdx >= 0) updateHud(defaultIdx);
+      draw();
+    });
+
+    window.addEventListener('resize', draw);
+    window.addEventListener('fupan:theme-change', draw);
+
+    (async () => {
+      try {
+        const res = await fetch(el.dataset.url!);
+        if (!res.ok) throw new Error(String(res.status));
+        bars = await res.json();
+        marks = JSON.parse(el.dataset.marks || '[]');
+        const targetDate = el.dataset.date ?? '';
+        defaultIdx = bars.findIndex((b) => b.date === targetDate);
+        if (defaultIdx < 0) defaultIdx = bars.length - 1;
+        if (fallback) fallback.style.display = 'none';
+        updateHud(defaultIdx);
+        draw();
+      } catch {
+        canvas.style.display = 'none';
+        if (fallback) fallback.textContent = 'K线数据缺失，请先运行 scripts/fetch_kline.py 抓取本地数据。';
+      }
+    })();
+  }
+
+  document.querySelectorAll<HTMLElement>('.kline-terminal').forEach(initKlineCard);
+</script>

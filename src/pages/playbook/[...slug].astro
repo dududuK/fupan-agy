@@ -1,0 +1,141 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { getLogsSorted, aggregatePatternStats } from '../../lib/trades';
+
+export async function getStaticPaths() {
+  const playbook = await getCollection('playbook');
+  return playbook.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+const logs = await getLogsSorted();
+const patternKey = entry.data.pattern ?? entry.data.title;
+const cases = logs.filter((l) => l.data.trades.some((t) => t.pattern === patternKey));
+const stat = aggregatePatternStats(logs).find((s) => s.pattern === patternKey) ?? null;
+---
+
+<Base title={entry.data.title} description={entry.data.description}>
+  <nav aria-label="面包屑导航" class="mb-6 flex items-center gap-2 text-xs text-[var(--ink-muted)] font-mono">
+    <a href="/" class="hover:text-[var(--ink)] transition-colors">总览</a>
+    <span aria-hidden="true">/</span>
+    <a href="/playbook" class="hover:text-[var(--ink)] transition-colors">战法手册</a>
+    <span aria-hidden="true">/</span>
+    <span class="text-[var(--ink-secondary)]">{patternKey}</span>
+  </nav>
+
+  <header class="pb-8 border-b border-[var(--line)]">
+    <div class="text-xs font-mono text-[var(--accent)]">战法定义 · {patternKey}</div>
+    <h1 class="mt-2.5 text-3xl sm:text-4xl font-bold tracking-tight text-[var(--ink)]">
+      {entry.data.title}
+    </h1>
+    {entry.data.description && (
+      <p class="mt-3 text-base text-[var(--ink-secondary)] max-w-3xl leading-relaxed">
+        {entry.data.description}
+      </p>
+    )}
+  </header>
+
+  <!-- Adjacent Performance Proof Strip -->
+  <section class="grid grid-cols-2 sm:grid-cols-4 border-x border-b border-[var(--line)] divide-y sm:divide-y-0 sm:divide-x divide-[var(--line)] bg-[var(--surface)] mb-10">
+    <div class="px-5 py-4">
+      <div class="text-xs text-[var(--ink-muted)]">累计出手</div>
+      <div class="mt-1 font-mono text-2xl font-bold tabular-nums text-[var(--ink)]">
+        {stat ? stat.total : 0}
+      </div>
+    </div>
+    <div class="px-5 py-4">
+      <div class="text-xs text-[var(--ink-muted)]">胜 / 负 / 持</div>
+      <div class="mt-1 font-mono text-lg font-semibold tabular-nums">
+        <span class="text-[var(--gain)]">{stat?.wins ?? 0}胜</span>
+        <span class="text-[var(--ink-muted)] mx-1">/</span>
+        <span class="text-[var(--loss)]">{stat?.losses ?? 0}负</span>
+        <span class="text-[var(--ink-muted)] mx-1">/</span>
+        <span class="text-[var(--ink-secondary)]">{stat?.holds ?? 0}持</span>
+      </div>
+    </div>
+    <div class="px-5 py-4">
+      <div class="text-xs text-[var(--ink-muted)]">已决胜率</div>
+      <div
+        class:list={[
+          'mt-1 font-mono text-2xl font-bold tabular-nums',
+          stat?.winRate == null
+            ? 'text-[var(--ink-muted)]'
+            : stat.winRate >= 0.5
+              ? 'text-[var(--gain)]'
+              : 'text-[var(--loss)]',
+        ]}
+      >
+        {stat?.winRate == null ? '—' : `${(stat.winRate * 100).toFixed(1)}%`}
+      </div>
+    </div>
+    <div class="px-5 py-4">
+      <div class="text-xs text-[var(--ink-muted)]">平均盈亏</div>
+      <div
+        class:list={[
+          'mt-1 font-mono text-2xl font-bold tabular-nums',
+          stat?.avgPnl == null
+            ? 'text-[var(--ink-muted)]'
+            : stat.avgPnl >= 0
+              ? 'text-[var(--gain)]'
+              : 'text-[var(--loss)]',
+        ]}
+      >
+        {stat?.avgPnl == null ? '—' : `${stat.avgPnl > 0 ? '+' : ''}${stat.avgPnl.toFixed(1)}%`}
+      </div>
+    </div>
+  </section>
+
+  <article class="prose-ledger max-w-[74ch]">
+    <Content />
+  </article>
+
+  <section class="mt-12 pt-8 border-t border-[var(--line)]">
+    <div class="flex items-baseline justify-between gap-4 mb-4">
+      <h2 class="text-lg font-semibold text-[var(--ink)]">实盘案例归档</h2>
+      <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">共 {cases.length} 篇</span>
+    </div>
+
+    {cases.length === 0 ? (
+      <div class="border border-[var(--line)] bg-[var(--surface)] p-8 text-center text-sm text-[var(--ink-muted)]">
+        还没有使用该战法的实盘复盘记录。
+      </div>
+    ) : (
+      <ul class="border border-[var(--line)] bg-[var(--surface)] divide-y divide-[var(--line)]">
+        {cases.map((l) => {
+          const matchedTrades = l.data.trades.filter((t) => t.pattern === patternKey);
+          return (
+            <li>
+              <a
+                href={`/logs/${l.id}`}
+                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 hover:bg-[var(--surface-subtle)]/60 transition-colors"
+              >
+                <div class="min-w-0">
+                  <div class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
+                    {l.data.date.toISOString().slice(0, 10)} · 净值 {l.data.net_value.toFixed(3)}
+                  </div>
+                  <div class="mt-1 font-semibold text-sm text-[var(--ink)]">{l.data.title}</div>
+                  <div class="mt-1 text-xs text-[var(--ink-secondary)]">{l.data.summary}</div>
+                </div>
+                <div class="font-mono text-xs tabular-nums shrink-0 text-right">
+                  {matchedTrades.map((t) => (
+                    <div class="text-[var(--ink-secondary)]">
+                      {t.name} ·{' '}
+                      <span class={t.pnl_pct != null && t.pnl_pct >= 0 ? 'text-[var(--gain)] font-semibold' : t.pnl_pct != null ? 'text-[var(--loss)] font-semibold' : ''}>
+                        {t.pnl_pct != null ? `${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct}%` : t.result ?? t.action}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    )}
+  </section>
+</Base>

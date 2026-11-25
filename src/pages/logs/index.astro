@@ -1,0 +1,255 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getLogsSorted } from '../../lib/trades';
+
+const logs = await getLogsSorted();
+const totalTrades = logs.reduce((s, l) => s + l.data.trades.length, 0);
+const flatDays = logs.filter((l) => l.data.trades.length === 0).length;
+const allPatterns = [
+  ...new Set(logs.flatMap((l) => l.data.trades.map((t) => t.pattern))),
+];
+const dateRange =
+  logs.length > 0
+    ? `${logs[logs.length - 1].data.date.toISOString().slice(0, 10)} — ${logs[0].data.date.toISOString().slice(0, 10)}`
+    : '暂无记录';
+---
+
+<Base title="复盘档案" description="全部实盘复盘记录按日期归档，支持按标的、战法与仓位状态检索。">
+  <header class="pb-8 border-b border-[var(--line)] flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-[var(--ink)]">复盘档案</h1>
+      <p class="mt-2 text-sm text-[var(--ink-secondary)]">
+        每一篇实盘记录都留存当日净值、纪律评分、交割明细与决策还原。
+      </p>
+    </div>
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-xs tabular-nums text-[var(--ink-muted)]">
+      <span>共 {logs.length} 篇</span>
+      <span aria-hidden="true">/</span>
+      <span>{totalTrades} 笔交割</span>
+      <span aria-hidden="true">/</span>
+      <span>{flatDays} 天空仓</span>
+      <span aria-hidden="true">/</span>
+      <span>{dateRange}</span>
+    </div>
+  </header>
+
+  <!-- Filter Toolbar -->
+  <section class="mt-6 mb-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+    <div class="flex flex-wrap items-center gap-3">
+      <input
+        id="logs-search"
+        type="search"
+        placeholder="搜索标题、日期、代码、标的或战法…"
+        aria-label="搜索复盘档案"
+        class="h-9 w-full sm:w-72 px-3 text-xs bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--ink)] placeholder:text-[var(--ink-muted)] focus:border-[var(--accent)] transition-colors"
+      />
+
+      {allPatterns.length > 0 && (
+        <select
+          id="logs-pattern"
+          aria-label="按战法筛选"
+          class="h-9 px-3 text-xs bg-[var(--surface)] border border-[var(--line-strong)] text-[var(--ink)] focus:border-[var(--accent)] transition-colors"
+        >
+          <option value="">全部战法</option>
+          {allPatterns.map((p) => (
+            <option value={p}>{p}</option>
+          ))}
+        </select>
+      )}
+    </div>
+
+    <div class="inline-flex border border-[var(--line)] bg-[var(--surface)] p-0.5 self-start lg:self-auto" role="group" aria-label="按交易状态筛选">
+      <button
+        type="button"
+        data-filter="all"
+        class="logs-filter-btn h-8 px-3 text-xs font-medium bg-[var(--surface-subtle)] text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+      >
+        全部 ({logs.length})
+      </button>
+      <button
+        type="button"
+        data-filter="traded"
+        class="logs-filter-btn h-8 px-3 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+      >
+        含交割 ({logs.length - flatDays})
+      </button>
+      <button
+        type="button"
+        data-filter="flat"
+        class="logs-filter-btn h-8 px-3 text-xs font-medium text-[var(--ink-muted)] hover:text-[var(--ink)] transition-colors whitespace-nowrap cursor-pointer"
+      >
+        空仓观望 ({flatDays})
+      </button>
+    </div>
+  </section>
+
+  <!-- Archive Ledger -->
+  <section class="border border-[var(--line)] bg-[var(--surface)]">
+    <div class="hidden md:grid grid-cols-12 gap-4 px-5 py-2.5 border-b border-[var(--line)] bg-[var(--surface-subtle)]/60 text-xs text-[var(--ink-muted)]">
+      <div class="col-span-2 font-mono">日期</div>
+      <div class="col-span-6">复盘标题、摘要与涉及战法</div>
+      <div class="col-span-1 text-right font-mono">净值</div>
+      <div class="col-span-1 text-right font-mono">纪律</div>
+      <div class="col-span-2 text-right">交割明细</div>
+    </div>
+
+    {logs.length === 0 ? (
+      <div class="px-5 py-12 text-center text-sm text-[var(--ink-muted)]">
+        暂无复盘记录。
+      </div>
+    ) : (
+      <ul id="logs-list" class="divide-y divide-[var(--line)]">
+        {logs.map((l) => {
+          const dateStr = l.data.date.toISOString().slice(0, 10);
+          const patterns = [...new Set(l.data.trades.map((t) => t.pattern))];
+          const haystack = [
+            l.data.title,
+            l.data.summary,
+            dateStr,
+            ...l.data.trades.flatMap((t) => [t.code, t.name, t.pattern]),
+          ]
+            .join(' ')
+            .toLowerCase();
+
+          return (
+            <li
+              class="logs-row group"
+              data-has-trades={l.data.trades.length > 0 ? 'true' : 'false'}
+              data-patterns={patterns.join('|')}
+              data-search={haystack}
+            >
+              <a
+                href={`/logs/${l.id}`}
+                class="grid grid-cols-1 md:grid-cols-12 gap-2 md:gap-4 px-5 py-4 items-center hover:bg-[var(--surface-subtle)]/60 transition-colors duration-150"
+              >
+                <div class="md:col-span-2 flex items-center justify-between md:block">
+                  <span class="font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
+                    {dateStr}
+                  </span>
+                  <span class="md:hidden font-mono text-xs tabular-nums text-[var(--ink)]">
+                    净值 {l.data.net_value.toFixed(3)} · 纪律 {l.data.discipline}/10
+                  </span>
+                </div>
+
+                <div class="md:col-span-6 min-w-0">
+                  <div class="font-semibold text-sm text-[var(--ink)] group-hover:text-[var(--accent)] transition-colors">
+                    {l.data.title}
+                  </div>
+                  <div class="mt-1 text-xs text-[var(--ink-secondary)] leading-relaxed">
+                    {l.data.summary}
+                  </div>
+                  {l.data.trades.length > 0 && (
+                    <div class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-mono tabular-nums text-[var(--ink-muted)]">
+                      {l.data.trades.map((t) => (
+                        <span>
+                          <span class={t.action === 'BUY' ? 'text-[var(--accent)]' : 'text-[var(--gain)]'}>
+                            {t.action === 'BUY' ? '买' : '卖'}
+                          </span>
+                          {' '}{t.name} ({t.pattern})
+                          {t.pnl_pct != null ? ` ${t.pnl_pct > 0 ? '+' : ''}${t.pnl_pct}%` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div class="hidden md:block md:col-span-1 text-right font-mono text-sm tabular-nums font-medium text-[var(--ink)]">
+                  {l.data.net_value.toFixed(3)}
+                </div>
+
+                <div class="hidden md:block md:col-span-1 text-right font-mono text-xs tabular-nums text-[var(--ink-secondary)]">
+                  {l.data.discipline}/10
+                </div>
+
+                <div class="hidden md:flex md:col-span-2 items-center justify-end gap-3 text-xs">
+                  <span class="font-mono tabular-nums text-[var(--ink-muted)]">
+                    {l.data.trades.length > 0 ? `${l.data.trades.length} 笔交割` : '空仓'}
+                  </span>
+                  <span class="text-[var(--ink-muted)] group-hover:text-[var(--accent)] transition-colors">
+                    →
+                  </span>
+                </div>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    )}
+
+    <div id="logs-empty" class="hidden px-5 py-12 text-center">
+      <p class="text-sm text-[var(--ink-secondary)]">没有符合筛选条件的复盘记录</p>
+      <button
+        id="logs-reset"
+        type="button"
+        class="mt-3 h-8 px-3.5 text-xs font-medium border border-[var(--line-strong)] bg-[var(--canvas)] text-[var(--ink)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+      >
+        重置筛选
+      </button>
+    </div>
+  </section>
+</Base>
+
+<script>
+  const searchInput = document.getElementById('logs-search') as HTMLInputElement | null;
+  const patternSelect = document.getElementById('logs-pattern') as HTMLSelectElement | null;
+  const filterBtns = document.querySelectorAll<HTMLButtonElement>('.logs-filter-btn');
+  const rows = document.querySelectorAll<HTMLLIElement>('.logs-row');
+  const emptyBox = document.getElementById('logs-empty');
+  const resetBtn = document.getElementById('logs-reset');
+
+  let activeFilter: 'all' | 'traded' | 'flat' = 'all';
+
+  function applyFilters() {
+    const q = (searchInput?.value ?? '').trim().toLowerCase();
+    const pat = patternSelect?.value ?? '';
+    let visible = 0;
+
+    rows.forEach((row) => {
+      const hasTrades = row.dataset.hasTrades === 'true';
+      const patterns = (row.dataset.patterns ?? '').split('|').filter(Boolean);
+      const hay = row.dataset.search ?? '';
+
+      const matchStatus =
+        activeFilter === 'all' ||
+        (activeFilter === 'traded' && hasTrades) ||
+        (activeFilter === 'flat' && !hasTrades);
+      const matchPattern = !pat || patterns.includes(pat);
+      const matchQuery = !q || hay.includes(q);
+      const show = matchStatus && matchPattern && matchQuery;
+
+      row.classList.toggle('hidden', !show);
+      if (show) visible++;
+    });
+
+    emptyBox?.classList.toggle('hidden', visible > 0);
+  }
+
+  searchInput?.addEventListener('input', applyFilters);
+  patternSelect?.addEventListener('change', applyFilters);
+
+  filterBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeFilter = (btn.dataset.filter as 'all' | 'traded' | 'flat') ?? 'all';
+      filterBtns.forEach((b) => {
+        const isCurrent = b.dataset.filter === activeFilter;
+        b.classList.toggle('bg-[var(--surface-subtle)]', isCurrent);
+        b.classList.toggle('text-[var(--ink)]', isCurrent);
+        b.classList.toggle('text-[var(--ink-muted)]', !isCurrent);
+      });
+      applyFilters();
+    });
+  });
+
+  resetBtn?.addEventListener('click', () => {
+    if (searchInput) searchInput.value = '';
+    if (patternSelect) patternSelect.value = '';
+    activeFilter = 'all';
+    filterBtns.forEach((b) => {
+      const isCurrent = b.dataset.filter === 'all';
+      b.classList.toggle('bg-[var(--surface-subtle)]', isCurrent);
+      b.classList.toggle('text-[var(--ink)]', isCurrent);
+      b.classList.toggle('text-[var(--ink-muted)]', !isCurrent);
+    });
+    applyFilters();
+  });
+</script>

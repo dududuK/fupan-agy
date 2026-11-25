@@ -1,0 +1,56 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+
+const rules = await getCollection('rules');
+const rendered = await Promise.all(
+  rules.map(async (entry) => ({
+    entry,
+    Content: (await render(entry)).Content,
+  }))
+);
+---
+
+<Base title="交易铁律" description="纪律高于预测，风控先于收益。">
+  <header class="pb-8 border-b border-[var(--line)] flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tight text-[var(--ink)]">交易铁律</h1>
+      <p class="mt-2 text-sm text-[var(--ink-secondary)]">
+        纪律高于预测，风控先于收益。所有实盘决策必须经得起铁律校验。
+      </p>
+    </div>
+    <span class="font-mono text-xs tabular-nums text-[var(--ink-muted)]">
+      共 {rules.length} 份纲领
+    </span>
+  </header>
+
+  {rendered.length === 0 ? (
+    <div class="mt-8 border border-[var(--line)] bg-[var(--surface)] p-10 text-center text-sm text-[var(--ink-muted)]">
+      暂无铁律文档。
+    </div>
+  ) : (
+    <div class="mt-8 space-y-8">
+      {rendered.map(({ entry, Content }, idx) => (
+        <section class="border border-[var(--line)] bg-[var(--surface)]">
+          <div class="px-6 py-4 border-b border-[var(--line)] flex items-center justify-between gap-4">
+            <div class="flex items-baseline gap-3">
+              <span class="font-mono text-xs text-[var(--accent)]">
+                {String(idx + 1).padStart(2, '0')}
+              </span>
+              <h2 class="text-lg font-bold text-[var(--ink)]">{entry.data.title}</h2>
+            </div>
+            <a
+              href={`/rules/${entry.id}`}
+              class="text-xs font-mono text-[var(--ink-muted)] hover:text-[var(--accent)] transition-colors whitespace-nowrap"
+            >
+              独立页面 →
+            </a>
+          </div>
+          <div class="p-6 sm:p-8 prose-ledger max-w-[74ch]">
+            <Content />
+          </div>
+        </section>
+      ))}
+    </div>
+  )}
+</Base>
