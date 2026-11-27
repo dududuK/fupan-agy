@@ -6,7 +6,7 @@ export type Trade = LogEntry['data']['trades'][number];
 /** 实盘账户初始参数与 A 股交易费率配置 */
 export const ACCOUNT_CONFIG = {
   /** 初始资金（元） */
-  initialCapital: 100_000,
+  initialCapital: 20_000,
   /** 券商佣金费率（双向，万 2.5） */
   commissionRate: 0.00025,
   /** 单笔最低佣金（元） */
